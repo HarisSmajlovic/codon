@@ -260,7 +260,7 @@ class UInt:
         elif N == 64:
             return UInt[N](Int[N](what))
         else:
-            return UInt[N](__internal__.int_zext(what, 64, N))
+            return UInt[N](__internal__.int_sext(what, 64, N))
 
     @pure
     @llvm
@@ -455,11 +455,15 @@ class UInt:
     def len() -> int:
         return N
 
+i1 = Int[1]
 i8 = Int[8]
 i16 = Int[16]
 i32 = Int[32]
 i64 = Int[64]
+i128 = Int[128]
+u1 = UInt[1]
 u8 = UInt[8]
 u16 = UInt[16]
 u32 = UInt[32]
 u64 = UInt[64]
+u128 = UInt[128]

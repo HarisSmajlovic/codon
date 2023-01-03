@@ -18,6 +18,12 @@ class Vec[T, N: Static[int]]:
         %0 = insertelement <32 x i8> undef, i8 %val, i32 0
         %1 = shufflevector <32 x i8> %0, <32 x i8> undef, <32 x i32> zeroinitializer
         ret <32 x i8> %1
+    
+    @llvm
+    def _mm256_set1_epi64x(val: u64) -> Vec[u64, 4]:
+        %0 = insertelement <4 x i64> undef, i64 %val, i32 0
+        %1 = shufflevector <4 x i64> %0, <4 x i64> undef, <4 x i32> zeroinitializer
+        ret <4 x i64> %1
 
     @llvm
     def _mm_loadu_si128(data) -> Vec[u8, 16]:
@@ -30,12 +36,24 @@ class Vec[T, N: Static[int]]:
         %0 = bitcast i8* %data to <32 x i8>*
         %1 = load <32 x i8>, <32 x i8>* %0, align 1
         ret <32 x i8> %1
+    
+    @llvm
+    def _mm256_load_epi64(data) -> Vec[u64, 4]:
+        %0 = bitcast i64* %data to <4 x i64>*
+        %1 = load <4 x i64>, <4 x i64>* %0
+        ret <4 x i64> %1
 
     @llvm
     def _mm256_set1_ps(val: f32) -> Vec[f32, 8]:
         %0 = insertelement <8 x float> undef, float %val, i32 0
         %1 = shufflevector <8 x float> %0, <8 x float> undef, <8 x i32> zeroinitializer
         ret <8 x float> %1
+    
+    @llvm
+    def _mm256_set1_pd(val: f64) -> Vec[f64, 4]:
+        %0 = insertelement <4 x double> undef, double %val, i64 0
+        %1 = shufflevector <4 x double> %0, <4 x double> undef, <4 x i32> zeroinitializer
+        ret <4 x double> %1
 
     @llvm
     def _mm512_set1_ps(val: f32) -> Vec[f32, 16]:
@@ -48,6 +66,12 @@ class Vec[T, N: Static[int]]:
         %0 = bitcast float* %data to <8 x float>*
         %1 = load <8 x float>, <8 x float>* %0
         ret <8 x float> %1
+    
+    @llvm
+    def _mm256_loadu_pd(data: Ptr[f64]) -> Vec[f64, 4]:
+        %0 = bitcast double* %data to <4 x double>*
+        %1 = load <4 x double>, <4 x double>* %0
+        ret <4 x double> %1
 
     @llvm
     def _mm512_loadu_ps(data: Ptr[f32]) -> Vec[f32, 16]:
@@ -71,6 +95,11 @@ class Vec[T, N: Static[int]]:
     def _mm256_castsi256_ps(vec: Vec[u32, 8]) -> Vec[f32, 8]:
         %0 = bitcast <8 x i32> %vec to <8 x float>
         ret <8 x float> %0
+    
+    @llvm
+    def _mm256_castsi256_pd(vec: Vec[u64, 4]) -> Vec[f64, 4]:
+        %0 = bitcast <4 x i64> %vec to <4 x double>
+        ret <4 x double> %0
 
     @llvm
     def _mm512_castsi512_ps(vec: Vec[u32, 16]) -> Vec[f32, 16]:
@@ -92,6 +121,15 @@ class Vec[T, N: Static[int]]:
                 return Vec._mm256_loadu_si256(x)
             if isinstance(x, str):
                 return Vec._mm256_loadu_si256(x.ptr)
+        if isinstance(T, u64) and N == 4:
+            if isinstance(x, u64):
+                return Vec._mm256_set1_epi64x(x)
+            if isinstance(x, Ptr[u64]):
+                return Vec._mm256_load_epi64(x)
+            if isinstance(x, List[u64]):
+                return Vec._mm256_load_epi64(x.arr.ptr)
+            if isinstance(x, str):
+                return Vec._mm256_load_epi64(x.ptr)
         if isinstance(T, f32) and N == 8:
             if isinstance(x, f32):
                 return Vec._mm256_set1_ps(x)
@@ -110,6 +148,15 @@ class Vec[T, N: Static[int]]:
                 return Vec._mm512_loadu_ps(x.arr.ptr)
             if isinstance(x, Vec[u8, 32]):
                 return Vec._mm512_castsi512_ps(Vec._mm512_cvtepi8_epi64(x))
+        if isinstance(T, f64) and N == 4:
+            if isinstance(x, f64):
+                return Vec._mm256_set1_pd(x)
+            if isinstance(x, Ptr[f64]):  # TODO: multi-elif does NOT work with statics [why?!]
+                return Vec._mm256_loadu_pd(x)
+            if isinstance(x, List[f64]):
+                return Vec._mm256_loadu_pd(x.arr.ptr)
+            if isinstance(x, Vec[u64, 4]):
+                return Vec._mm256_castsi256_pd(Vec._mm256_cvtepi8_epi32(x))
         compile_error("invalid SIMD vector constructor")
 
     def __new__(x: str, offset: int = 0) -> Vec[u8, N]:
@@ -184,6 +231,14 @@ class Vec[T, N: Static[int]]:
 
     def __and__(self: Vec[u8, 32], other: Vec[u8, 32]) -> Vec[u8, 32]:
         return Vec._mm_and_si256(self, other)
+    
+    @llvm
+    def _mm256_and_si256(x: Vec[u64, 4], y: Vec[u64, 4]) -> Vec[u64, 4]:
+        %0 = and <4 x i64> %x, %y
+        ret <4 x i64> %0
+
+    def __and__(self: Vec[u64, 4], other: Vec[u64, 4]) -> Vec[u64, 4]:
+        return Vec._mm256_and_si256(self, other)
 
     @llvm
     def _mm256_and_ps(x: Vec[f32, 8], y: Vec[f32, 8]) -> Vec[f32, 8]:
@@ -255,9 +310,6 @@ class Vec[T, N: Static[int]]:
         %0 = fadd <8 x float> %x, %y
         ret <8 x float> %0
 
-    def __add__(self: Vec[f32, 8], other: Vec[f32, 8]) -> Vec[f32, 8]:
-        return Vec._mm256_add_ps(self, other)
-
     def __rshift__(self: Vec[u8, 16], shift: Static[int]) -> Vec[u8, 16]:
         if shift == 0:
             return self
@@ -294,18 +346,178 @@ class Vec[T, N: Static[int]]:
     def sum(self: Vec[f32, 8], x: f32 = f32(0.0)) -> f32:
         return x + self[0] + self[1] + self[2] + self[3] + self[4] + self[5] + self[6] + self[7]
 
-    @llvm
-    def __getitem__(self, n: Static[int]) -> T:
-        %0 = extractelement <{=N} x {=T}> %self, i32 {=n}
-        ret {=T} %0
-
     def __repr__(self):
-        if N == 8:
-            return f"<{self[0]}, {self[1]}, {self[2]}, {self[3]}, {self[4]}, {self[5]}, {self[6]}, {self[7]}>"
-        elif N == 16:
-            return f"<{self[0]}, {self[1]}, {self[2]}, {self[3]}, {self[4]}, {self[5]}, {self[6]}, {self[7]}, {self[8]}, {self[9]}, {self[10]}, {self[11]}, {self[12]}, {self[13]}, {self[14]}, {self[15]}>"
+        if N == 4:
+            return f"<{self.get0()}, {self.get1()}, {self.get2()}, {self.get3()}>"
         else:
             return "?"
+    
+    # Methods below added ad-hoc. TODO: Add Intel intrinsics equivalents for them and integrate them neatly above.
+
+    # Bitwise intrinsics
+    @llvm
+    def __lshift__(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
+        %0 = shl <{=N} x {=T}> %self, %other
+        ret <{=N} x {=T}> %0
+
+    @llvm
+    def bit_flip(self: Vec[u1, 4]) -> Vec[u1, 4]:
+        %0 = xor <4 x i1> %self, <i1 1, i1 1, i1 1, i1 1>
+        ret <4 x i1> %0
+    
+    @llvm
+    def shift_half(self: Vec[u128, 4]) -> Vec[u128, 4]:
+        %0 = lshr <4 x i128> %self, <i128 64, i128 64, i128 64, i128 64>
+        ret <4 x i128> %0
+
+    # Arithmetic intrinsics
+    @llvm
+    def __ge__(self: Vec[u64, N], other: Vec[u64, N]) -> Vec[u1, N]:
+        %0 = icmp uge <{=N} x i64> %self, %other
+        ret <{=N} x i1> %0
+    
+    @llvm
+    def __and__(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
+        %0 = and <{=N} x {=T}> %self, %other
+        ret <{=N} x {=T}> %0
+
+    @llvm
+    def __neg__(self: Vec[T, N]) -> Vec[T, N]:
+        %0 = sub <{=N} x {=T}> zeroinitializer, %self
+        ret <{=N} x {=T}> %0
+
+    @llvm
+    def add(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
+        %0 = add <{=N} x {=T}> %self, %other
+        ret <{=N} x {=T}> %0
+    
+    @llvm
+    def fadd(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
+        %0 = fadd <{=N} x {=T}> %self, %other
+        ret <{=N} x {=T}> %0
+    
+    def __add__(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
+        if isinstance(T, u8) or isinstance(T, u64) or isinstance(T, u128):
+            return self.add(other)
+        if isinstance(T, f32) or isinstance(T, f64):
+            return self.fadd(other)
+        compile_error("invalid SIMD vector addition")
+    
+    @llvm
+    def sub(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
+        %0 = sub <{=N} x {=T}> %self, %other
+        ret <{=N} x {=T}> %0
+    
+    @llvm
+    def fsub(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
+        %0 = fsub <{=N} x {=T}> %self, %other
+        ret <{=N} x {=T}> %0
+
+    def __sub__(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
+        if isinstance(T, u8) or isinstance(T, u64):
+            return self.sub(other)
+        if isinstance(T, f32) or isinstance(T, f64):
+            return self.fsub(other)
+        compile_error("invalid SIMD vector subtraction")
+    
+    @llvm
+    def mul(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
+        %0 = mul <{=N} x {=T}> %self, %other
+        ret <{=N} x {=T}> %0
+    
+    @llvm
+    def fmul(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
+        %0 = fmul <{=N} x {=T}> %self, %other
+        ret <{=N} x {=T}> %0
+    
+    def __mul__(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
+        if isinstance(T, u8) or isinstance(T, u64):
+            return self.mul(other)
+        if isinstance(T, f32) or isinstance(T, f64):
+            return self.fmul(other)
+        compile_error("invalid SIMD vector subtraction")
+    
+    @llvm
+    def __truediv__(self: Vec[u64, 4], other: Vec[u64, 4]) -> Vec[f64, 4]:
+        %0 = uitofp <4 x i64> %self to <4 x double>
+        %1 = uitofp <4 x i64> %other to <4 x double>
+        %2 = fdiv <4 x double> %0, %1
+        ret <4 x double> %2
+
+    @llvm
+    def add_overflow(self: Vec[u64, 4], other: Vec[u64, 4]) -> Tuple[Vec[u64, 4], Vec[u1, 4]]:
+        declare {<4 x i64>, <4 x i1>} @llvm.uadd.with.overflow.v4i64(<4 x i64>, <4 x i64>)
+        %0 = call {<4 x i64>, <4 x i1>} @llvm.uadd.with.overflow.v4i64(<4 x i64> %self, <4 x i64> %other)
+        ret {<4 x i64>, <4 x i1>} %0
+    
+    @llvm
+    def sub_overflow(self: Vec[u64, 4], other: Vec[u64, 4]) -> Tuple[Vec[u64, 4], Vec[u1, 4]]:
+        declare {<4 x i64>, <4 x i1>} @llvm.usub.with.overflow.v4i64(<4 x i64>, <4 x i64>)
+        %0 = call {<4 x i64>, <4 x i1>} @llvm.usub.with.overflow.v4i64(<4 x i64> %self, <4 x i64> %other)
+        ret {<4 x i64>, <4 x i1>} %0
+
+    @llvm
+    def zext_mul(self: Vec[u64, 4], other: Vec[u64, 4]) -> Vec[u128, 4]:
+        %0 = zext <4 x i64> %self to <4 x i128>
+        %1 = zext <4 x i64> %other to <4 x i128>
+        %2 = mul <4 x i128> %0, %1
+        ret <4 x i128> %2
+    
+    def mulhi(self: Vec[u64, 4], other: Vec[u64, 4]) -> Vec[u64, 4]:
+        return self.zext_mul(other).shift_half().trunc_half()
+    
+    # Conversion intrinsics
+    @llvm
+    def zext_double(self: Vec[u64, N]) -> Vec[u128, N]:
+        %0 = zext <{=N} x i64> %self to <{=N} x i128>
+        ret <{=N} x i128> %0
+    
+    @llvm
+    def trunc_half(self: Vec[u128, N]) -> Vec[u64, N]:
+        %0 = trunc <{=N} x i128> %self to <{=N} x i64>
+        ret <{=N} x i64> %0
+    
+    @llvm
+    def to_u64(self: Vec[f64, N]) -> Vec[u64, N]:
+        %0 = fptoui <{=N} x double> %self to <{=N} x i64>
+        ret <{=N} x i64> %0
+    
+    # Predication intrinsics
+    @llvm
+    def sub_if(self: Vec[T, N], other: Vec[T, N], mask: Vec[u1, N]) -> Vec[T, N]:
+        %0 = sub <{=N} x {=T}> %self, %other
+        %1 = select <{=N} x i1> %mask, <{=N} x {=T}> %0, <{=N} x {=T}> %self
+        ret <{=N} x {=T}> %1
+    
+    # Gather-scatter
+    # TODO: Implement getitem once the Static param bug is fixed
+    @llvm
+    def get0(self: Vec[T, 4]) -> T:
+        %0 = extractelement <4 x {=T}> %self, i32 0
+        ret {=T} %0
+    
+    @llvm
+    def get1(self: Vec[T, 4]) -> T:
+        %0 = extractelement <4 x {=T}> %self, i32 1
+        ret {=T} %0
+    
+    @llvm
+    def get2(self: Vec[T, 4]) -> T:
+        %0 = extractelement <4 x {=T}> %self, i32 2
+        ret {=T} %0
+    
+    @llvm
+    def get3(self: Vec[T, 4]) -> T:
+        %0 = extractelement <4 x {=T}> %self, i32 3
+        ret {=T} %0
+
+    def scatter(self: Vec[T, 4]) -> List[T]:
+        return [self.get0(), self.get1(), self.get2(), self.get3()]
+    
+    # Misc
+    def copy(self: Vec[T, N]) -> Vec[T, N]:
+        return self
+
 
 u8x16 = Vec[u8, 16]
 u8x32 = Vec[u8, 32]
