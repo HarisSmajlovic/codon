@@ -7,6 +7,8 @@ class Vec[T, N: Static[int]]:
     ZERO_32x8i = Vec[u8,32](u8(0))
     FF_32x8i = Vec[u8,32](u8(0xff))
 
+    ZERO_4x64f = Vec[f64,4](0.0)
+
     @llvm
     def _mm_set1_epi8(val: u8) -> Vec[u8, 16]:
         %0 = insertelement <16 x i8> undef, i8 %val, i32 0
@@ -358,6 +360,11 @@ class Vec[T, N: Static[int]]:
     @llvm
     def __lshift__(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
         %0 = shl <{=N} x {=T}> %self, %other
+        ret <{=N} x {=T}> %0
+    
+    @llvm
+    def __rshift__(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
+        %0 = lshr <{=N} x {=T}> %self, %other
         ret <{=N} x {=T}> %0
 
     @llvm
