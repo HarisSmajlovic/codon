@@ -124,6 +124,9 @@ class Vec[T, N: Static[int]]:
             if isinstance(x, str):
                 return Vec._mm256_loadu_si256(x.ptr)
         if isinstance(T, u64) and N == 4:
+            if isinstance(x, int):
+                assert x >= 0, "SIMD: No support for negative int vectors added yet."
+                return Vec._mm256_set1_epi64x(u64(x))
             if isinstance(x, u64):
                 return Vec._mm256_set1_epi64x(x)
             if isinstance(x, Ptr[u64]):
@@ -358,6 +361,16 @@ class Vec[T, N: Static[int]]:
 
     # Bitwise intrinsics
     @llvm
+    def __or__(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
+        %0 = or <{=N} x {=T}> %self, %other
+        ret <{=N} x {=T}> %0
+    
+    @llvm
+    def __xor__(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
+        %0 = xor <{=N} x {=T}> %self, %other
+        ret <{=N} x {=T}> %0
+
+    @llvm
     def __lshift__(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
         %0 = shl <{=N} x {=T}> %self, %other
         ret <{=N} x {=T}> %0
@@ -377,12 +390,18 @@ class Vec[T, N: Static[int]]:
         %0 = lshr <4 x i128> %self, <i128 64, i128 64, i128 64, i128 64>
         ret <4 x i128> %0
 
-    # Arithmetic intrinsics
+    # Comparisons
     @llvm
     def __ge__(self: Vec[u64, N], other: Vec[u64, N]) -> Vec[u1, N]:
         %0 = icmp uge <{=N} x i64> %self, %other
         ret <{=N} x i1> %0
     
+    @llvm
+    def __le__(self: Vec[u64, N], other: Vec[u64, N]) -> Vec[u1, N]:
+        %0 = icmp ule <{=N} x i64> %self, %other
+        ret <{=N} x i1> %0
+    
+    # Arithmetic intrinsics
     @llvm
     def __and__(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
         %0 = and <{=N} x {=T}> %self, %other
@@ -489,6 +508,11 @@ class Vec[T, N: Static[int]]:
         %0 = fptoui <{=N} x double> %self to <{=N} x i64>
         ret <{=N} x i64> %0
     
+    @llvm
+    def to_u64(self: Vec[u1, N]) -> Vec[u64, N]:
+        %0 = zext <{=N} x i1> %self to <{=N} x i64>
+        ret <{=N} x i64> %0
+    
     # Predication intrinsics
     @llvm
     def sub_if(self: Vec[T, N], other: Vec[T, N], mask: Vec[u1, N]) -> Vec[T, N]:
@@ -524,8 +548,25 @@ class Vec[T, N: Static[int]]:
     # Misc
     def copy(self: Vec[T, N]) -> Vec[T, N]:
         return self
+       
+    @llvm
+    def mask(self: Vec[T, N], mask: Vec[u1, N], other: Vec[T, N]) -> Vec[T, N]:
+        %0 = select <{=N} x i1> %mask, <{=N} x {=T}> %self, <{=N} x {=T}> %other
+        ret <{=N} x {=T}> %0
 
 
 u8x16 = Vec[u8, 16]
 u8x32 = Vec[u8, 32]
 f32x8 = Vec[f32, 8]
+
+
+@llvm
+def bitcast_scatter(ptr_in: Ptr[Vec[u64, 4]]) -> Ptr[u64]:
+    %0 = bitcast <4 x i64>* %ptr_in to i64*
+    ret i64* %0
+
+
+@llvm
+def bitcast_vectorize(ptr_in: Ptr[u64]) -> Ptr[Vec[u64, 4]]:
+    %0 = bitcast i64* %ptr_in to <4 x i64>*
+    ret <4 x i64>* %0
