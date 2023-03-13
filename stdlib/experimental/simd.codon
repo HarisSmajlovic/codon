@@ -1,5 +1,20 @@
 # Copyright (C) 2022 Exaloop Inc. <https://exaloop.io>
 
+
+# TODO: Add join method to str
+@extend
+class str:
+    def join(self, l: List) -> str:
+        if len(l) == 0: return ""
+        if len(l) == 1: return str(l[0])
+
+        s = ""
+        for i in range(len(l) - 1): s += f"{l[i]}{self}"
+        s += str(l[-1])
+
+        return s
+
+
 @tuple
 class Vec[T, N: Static[int]]:
     ZERO_16x8i = Vec[u8,16](u8(0))
@@ -441,15 +456,23 @@ class Vec[T, N: Static[int]]:
         return x + self[0] + self[1] + self[2] + self[3] + self[4] + self[5] + self[6] + self[7]
 
     def __repr__(self):
-        if N == 4:
-            return f"<{self.get0()}, {self.get1()}, {self.get2()}, {self.get3()}>"
-        elif N == 8:
-            return f"<{self.get0()}, {self.get1()}, {self.get2()}, {self.get3()}, {self.get4()}, {self.get5()}, {self.get6()}, {self.get7()}>"
-        else:
-            return "?"
+        return f"<{','.join(self.scatter())}>"
     
     # Methods below added ad-hoc. TODO: Add Intel intrinsics equivalents for them and integrate them neatly above.
 
+    # Constructors
+    @llvm
+    def generic_init[SLS: Static[int]](val: T) -> Vec[T, SLS]:
+        %0 = insertelement <{=SLS} x {=T}> undef, {=T} %val, i32 0
+        %1 = shufflevector <{=SLS} x {=T}> %0, <{=SLS} x {=T}> undef, <{=SLS} x i32> zeroinitializer
+        ret <{=SLS} x {=T}> %1
+
+    @llvm
+    def generic_load[SLS: Static[int]](data: Ptr[T]) -> Vec[T, SLS]:
+        %0 = bitcast T* %data to <{=SLS} x {=T}>*
+        %1 = load <{=SLS} x {=T}>, <{=SLS} x {=T}>* %0
+        ret <{=SLS} x {=T}> %1
+    
     # Bitwise intrinsics
     @llvm
     def __and__(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
@@ -457,14 +480,35 @@ class Vec[T, N: Static[int]]:
         ret <{=N} x {=T}> %0
 
     @llvm
+    def __and__(self: Vec[T, N], other: T) -> Vec[T, N]:
+        %0 = insertelement <{=N} x {=T}> undef, {=T} %other, i32 0
+        %1 = shufflevector <{=N} x {=T}> %0, <{=N} x {=T}> undef, <{=N} x i32> zeroinitializer
+        %2 = and <{=N} x {=T}> %self, %1
+        ret <{=N} x {=T}> %2
+
+    @llvm
     def __or__(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
         %0 = or <{=N} x {=T}> %self, %other
         ret <{=N} x {=T}> %0
     
     @llvm
+    def __or__(self: Vec[T, N], other: T) -> Vec[T, N]:
+        %0 = insertelement <{=N} x {=T}> undef, {=T} %other, i32 0
+        %1 = shufflevector <{=N} x {=T}> %0, <{=N} x {=T}> undef, <{=N} x i32> zeroinitializer
+        %2 = or <{=N} x {=T}> %self, %1
+        ret <{=N} x {=T}> %2
+    
+    @llvm
     def __xor__(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
         %0 = xor <{=N} x {=T}> %self, %other
         ret <{=N} x {=T}> %0
+    
+    @llvm
+    def __xor__(self: Vec[T, N], other: T) -> Vec[T, N]:
+        %0 = insertelement <{=N} x {=T}> undef, {=T} %other, i32 0
+        %1 = shufflevector <{=N} x {=T}> %0, <{=N} x {=T}> undef, <{=N} x i32> zeroinitializer
+        %2 = xor <{=N} x {=T}> %self, %1
+        ret <{=N} x {=T}> %2
 
     @llvm
     def __lshift__(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
@@ -472,30 +516,38 @@ class Vec[T, N: Static[int]]:
         ret <{=N} x {=T}> %0
     
     @llvm
+    def __lshift__(self: Vec[T, N], other: T) -> Vec[T, N]:
+        %0 = insertelement <{=N} x {=T}> undef, {=T} %other, i32 0
+        %1 = shufflevector <{=N} x {=T}> %0, <{=N} x {=T}> undef, <{=N} x i32> zeroinitializer
+        %2 = shl <{=N} x {=T}> %self, %1
+        ret <{=N} x {=T}> %2
+    
+    @llvm
     def __rshift__(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
         %0 = lshr <{=N} x {=T}> %self, %other
         ret <{=N} x {=T}> %0
+    
+    @llvm
+    def __rshift__(self: Vec[T, N], other: T) -> Vec[T, N]:
+        %0 = insertelement <{=N} x {=T}> undef, {=T} %other, i32 0
+        %1 = shufflevector <{=N} x {=T}> %0, <{=N} x {=T}> undef, <{=N} x i32> zeroinitializer
+        %2 = lshr <{=N} x {=T}> %self, %1
+        ret <{=N} x {=T}> %2
 
     @llvm
-    def bit_flip(self: Vec[u1, 4]) -> Vec[u1, 4]:
-        %0 = xor <4 x i1> %self, <i1 1, i1 1, i1 1, i1 1>
-        ret <4 x i1> %0
+    def bit_flip(self: Vec[u1, N]) -> Vec[u1, N]:
+        %0 = insertelement <{=N} x i1> undef, i1 1, i32 0
+        %1 = shufflevector <{=N} x i1> %0, <{=N} x i1> undef, <{=N} x i32> zeroinitializer
+        %2 = xor <{=N} x i1> %self, %1
+        ret <{=N} x i1> %2
     
     @llvm
-    def bit_flip(self: Vec[u1, 8]) -> Vec[u1, 8]:
-        %0 = xor <8 x i1> %self, <i1 1, i1 1, i1 1, i1 1, i1 1, i1 1, i1 1, i1 1>
-        ret <8 x i1> %0
+    def shift_half(self: Vec[u128, N]) -> Vec[u128, N]:
+        %0 = insertelement <{=N} x i128> undef, i128 64, i32 0
+        %1 = shufflevector <{=N} x i128> %0, <{=N} x i128> undef, <{=N} x i32> zeroinitializer
+        %2 = lshr <{=N} x i128> %self, %1
+        ret <{=N} x i128> %2
     
-    @llvm
-    def shift_half(self: Vec[u128, 4]) -> Vec[u128, 4]:
-        %0 = lshr <4 x i128> %self, <i128 64, i128 64, i128 64, i128 64>
-        ret <4 x i128> %0
-    
-    @llvm
-    def shift_half(self: Vec[u128, 8]) -> Vec[u128, 8]:
-        %0 = lshr <8 x i128> %self, <i128 64, i128 64, i128 64, i128 64, i128 64, i128 64, i128 64, i128 64>
-        ret <8 x i128> %0
-
     # Comparisons
     @llvm
     def __ge__(self: Vec[u64, N], other: Vec[u64, N]) -> Vec[u1, N]:
@@ -503,14 +555,35 @@ class Vec[T, N: Static[int]]:
         ret <{=N} x i1> %0
     
     @llvm
+    def __ge__(self: Vec[u64, N], other: u64) -> Vec[u1, N]:
+        %0 = insertelement <{=N} x i64> undef, i64 %other, i32 0
+        %1 = shufflevector <{=N} x i64> %0, <{=N} x i64> undef, <{=N} x i32> zeroinitializer
+        %2 = icmp uge <{=N} x i64> %self, %1
+        ret <{=N} x i1> %2
+    
+    @llvm
     def __ge__(self: Vec[f64, N], other: Vec[f64, N]) -> Vec[u1, N]:
         %0 = fcmp oge <{=N} x double> %self, %other
         ret <{=N} x i1> %0
     
     @llvm
+    def __ge__(self: Vec[f64, N], other: f64) -> Vec[u1, N]:
+        %0 = insertelement <{=N} x double> undef, double %other, i32 0
+        %1 = shufflevector <{=N} x double> %0, <{=N} x double> undef, <{=N} x i32> zeroinitializer
+        %2 = fcmp oge <{=N} x double> %self, %1
+        ret <{=N} x i1> %2
+    
+    @llvm
     def __le__(self: Vec[u64, N], other: Vec[u64, N]) -> Vec[u1, N]:
         %0 = icmp ule <{=N} x i64> %self, %other
         ret <{=N} x i1> %0
+    
+    @llvm
+    def __le__(self: Vec[u64, N], other: u64) -> Vec[u1, N]:
+        %0 = insertelement <{=N} x i64> undef, i64 %other, i32 0
+        %1 = shufflevector <{=N} x i64> %0, <{=N} x i64> undef, <{=N} x i32> zeroinitializer
+        %2 = icmp ule <{=N} x i64> %self, %1
+        ret <{=N} x i1> %2
     
     # Arithmetic intrinsics
     @llvm
@@ -522,6 +595,13 @@ class Vec[T, N: Static[int]]:
     def __mod__(self: Vec[u64, N], other: Vec[u64, N]) -> Vec[u64, N]:
         %0 = urem <{=N} x i64> %self, %other
         ret <{=N} x i64> %0
+    
+    @llvm
+    def __mod__(self: Vec[u64, N], other: u64) -> Vec[u64, N]:
+        %0 = insertelement <{=N} x i64> undef, i64 %other, i32 0
+        %1 = shufflevector <{=N} x i64> %0, <{=N} x i64> undef, <{=N} x i32> zeroinitializer
+        %2 = urem <{=N} x i64> %self, %1
+        ret <{=N} x i64> %2
 
     @llvm
     def add(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
@@ -529,11 +609,25 @@ class Vec[T, N: Static[int]]:
         ret <{=N} x {=T}> %0
     
     @llvm
+    def add(self: Vec[T, N], other: T) -> Vec[T, N]:
+        %0 = insertelement <{=N} x {=T}> undef, {=T} %other, i32 0
+        %1 = shufflevector <{=N} x {=T}> %0, <{=N} x {=T}> undef, <{=N} x i32> zeroinitializer
+        %2 = add <{=N} x {=T}> %self, %1
+        ret <{=N} x {=T}> %2
+    
+    @llvm
     def fadd(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
         %0 = fadd <{=N} x {=T}> %self, %other
         ret <{=N} x {=T}> %0
+
+    @llvm
+    def fadd(self: Vec[T, N], other: T) -> Vec[T, N]:
+        %0 = insertelement <{=N} x {=T}> undef, {=T} %other, i32 0
+        %1 = shufflevector <{=N} x {=T}> %0, <{=N} x {=T}> undef, <{=N} x i32> zeroinitializer
+        %2 = fadd <{=N} x {=T}> %self, %1
+        ret <{=N} x {=T}> %2
     
-    def __add__(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
+    def __add__(self: Vec[T, N], other) -> Vec[T, N]:
         if isinstance(T, u8) or isinstance(T, u64) or isinstance(T, u128):
             return self.add(other)
         if isinstance(T, f32) or isinstance(T, f64):
@@ -546,11 +640,25 @@ class Vec[T, N: Static[int]]:
         ret <{=N} x {=T}> %0
     
     @llvm
+    def sub(self: Vec[T, N], other: T) -> Vec[T, N]:
+        %0 = insertelement <{=N} x {=T}> undef, {=T} %other, i32 0
+        %1 = shufflevector <{=N} x {=T}> %0, <{=N} x {=T}> undef, <{=N} x i32> zeroinitializer
+        %2 = sub <{=N} x {=T}> %self, %1
+        ret <{=N} x {=T}> %2
+    
+    @llvm
     def fsub(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
         %0 = fsub <{=N} x {=T}> %self, %other
         ret <{=N} x {=T}> %0
+    
+    @llvm
+    def fsub(self: Vec[T, N], other: T) -> Vec[T, N]:
+        %0 = insertelement <{=N} x {=T}> undef, {=T} %other, i32 0
+        %1 = shufflevector <{=N} x {=T}> %0, <{=N} x {=T}> undef, <{=N} x i32> zeroinitializer
+        %2 = fsub <{=N} x {=T}> %self, %1
+        ret <{=N} x {=T}> %2
 
-    def __sub__(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
+    def __sub__(self: Vec[T, N], other) -> Vec[T, N]:
         if isinstance(T, u8) or isinstance(T, u64):
             return self.sub(other)
         if isinstance(T, f32) or isinstance(T, f64):
@@ -567,12 +675,34 @@ class Vec[T, N: Static[int]]:
         %0 = fmul <{=N} x {=T}> %self, %other
         ret <{=N} x {=T}> %0
     
-    def __mul__(self: Vec[T, N], other: Vec[T, N]) -> Vec[T, N]:
+    @llvm
+    def mul(self: Vec[T, N], other: T) -> Vec[T, N]:
+        %0 = insertelement <{=N} x {=T}> undef, {=T} %other, i32 0
+        %1 = shufflevector <{=N} x {=T}> %0, <{=N} x {=T}> undef, <{=N} x i32> zeroinitializer
+        %2 = mul <{=N} x {=T}> %self, %1
+        ret <{=N} x {=T}> %2
+    
+    @llvm
+    def fmul(self: Vec[T, N], other: T) -> Vec[T, N]:
+        %0 = insertelement <{=N} x {=T}> undef, {=T} %other, i32 0
+        %1 = shufflevector <{=N} x {=T}> %0, <{=N} x {=T}> undef, <{=N} x i32> zeroinitializer
+        %2 = fmul <{=N} x {=T}> %self, %1
+        ret <{=N} x {=T}> %2
+    
+    def __mul__(self: Vec[T, N], other) -> Vec[T, N]:
         if isinstance(T, u8) or isinstance(T, u64):
             return self.mul(other)
         if isinstance(T, f32) or isinstance(T, f64):
             return self.fmul(other)
         compile_error("invalid SIMD vector subtraction")
+    
+    # TODO: (Codon bug) The method bellow cannot be typechecked if N is generic
+    # @llvm
+    # def __truediv__(self: Vec[u64, N], other: Vec[u64, N]) -> Vec[f64, N]:
+    #     %0 = uitofp <{=N} x i64> %self to <{=N} x double>
+    #     %1 = uitofp <{=N} x i64> %other to <{=N} x double>
+    #     %2 = fdiv <{=N} x double> %0, %1
+    #     ret <{=N} x double> %2
     
     @llvm
     def __truediv__(self: Vec[u64, 4], other: Vec[u64, 4]) -> Vec[f64, 4]:
@@ -587,6 +717,15 @@ class Vec[T, N: Static[int]]:
         %1 = uitofp <8 x i64> %other to <8 x double>
         %2 = fdiv <8 x double> %0, %1
         ret <8 x double> %2
+    
+    @llvm
+    def __truediv__(self: Vec[u64, 8], other: u64) -> Vec[f64, 8]:
+        %0 = uitofp <8 x i64> %self to <8 x double>
+        %1 = uitofp i64 %other to double
+        %2 = insertelement <8 x double> undef, double %1, i32 0
+        %3 = shufflevector <8 x double> %0, <8 x double> undef, <8 x i32> zeroinitializer
+        %4 = fdiv <8 x double> %0, %3
+        ret <8 x double> %4
 
     @llvm
     def add_overflow(self: Vec[u64, N], other: Vec[u64, N]) -> Tuple[Vec[u64, N], Vec[u1, N]]:
@@ -595,10 +734,29 @@ class Vec[T, N: Static[int]]:
         ret {<{=N} x i64>, <{=N} x i1>} %0
     
     @llvm
+    def add_overflow(self: Vec[u64, N], other: u64) -> Tuple[Vec[u64, N], Vec[u1, N]]:
+        declare {<{=N} x i64>, <{=N} x i1>} @llvm.uadd.with.overflow.v{=N}i64(<{=N} x i64>, <{=N} x i64>)
+        %0 = insertelement <{=N} x i64> undef, i64 %other, i32 0
+        %1 = shufflevector <{=N} x i64> %0, <{=N} x i64> undef, <{=N} x i32> zeroinitializer
+        %2 = call {<{=N} x i64>, <{=N} x i1>} @llvm.uadd.with.overflow.v{=N}i64(<{=N} x i64> %self, <{=N} x i64> %1)
+        ret {<{=N} x i64>, <{=N} x i1>} %2
+    
+    @llvm
     def sub_overflow(self: Vec[u64, N], other: Vec[u64, N]) -> Tuple[Vec[u64, N], Vec[u1, N]]:
         declare {<{=N} x i64>, <{=N} x i1>} @llvm.usub.with.overflow.v{=N}i64(<{=N} x i64>, <{=N} x i64>)
         %0 = call {<{=N} x i64>, <{=N} x i1>} @llvm.usub.with.overflow.v{=N}i64(<{=N} x i64> %self, <{=N} x i64> %other)
         ret {<{=N} x i64>, <{=N} x i1>} %0
+    
+    def sub_overflow_commutative(self: Vec[u64, N], other: u64) -> Tuple[Vec[u64, N], Vec[u1, N]]:
+        return Vec[u64, N](other).sub_overflow(self)
+    
+    @llvm
+    def sub_overflow(self: Vec[u64, N], other: u64) -> Tuple[Vec[u64, N], Vec[u1, N]]:
+        declare {<{=N} x i64>, <{=N} x i1>} @llvm.usub.with.overflow.v{=N}i64(<{=N} x i64>, <{=N} x i64>)
+        %0 = insertelement <{=N} x i64> undef, i64 %other, i32 0
+        %1 = shufflevector <{=N} x i64> %0, <{=N} x i64> undef, <{=N} x i32> zeroinitializer
+        %2 = call {<{=N} x i64>, <{=N} x i1>} @llvm.usub.with.overflow.v{=N}i64(<{=N} x i64> %self, <{=N} x i64> %1)
+        ret {<{=N} x i64>, <{=N} x i1>} %2
 
     @llvm
     def zext_mul(self: Vec[u64, N], other: Vec[u64, N]) -> Vec[u128, N]:
@@ -607,7 +765,16 @@ class Vec[T, N: Static[int]]:
         %2 = mul <{=N} x i128> %0, %1
         ret <{=N} x i128> %2
     
-    def mulhi(self: Vec[u64, N], other: Vec[u64, N]) -> Vec[u64, N]:
+    @llvm
+    def zext_mul(self: Vec[u64, N], other: u64) -> Vec[u128, N]:
+        %0 = zext <{=N} x i64> %self to <{=N} x i128>
+        %1 = insertelement <{=N} x i64> undef, i64 %other, i32 0
+        %2 = shufflevector <{=N} x i64> %1, <{=N} x i64> undef, <{=N} x i32> zeroinitializer
+        %3 = zext <{=N} x i64> %2 to <{=N} x i128>
+        %4 = mul <{=N} x i128> %0, %3
+        ret <{=N} x i128> %4
+    
+    def mulhi(self: Vec[u64, N], other) -> Vec[u64, N]:
         return self.zext_mul(other).shift_half().trunc_half()
     
     @llvm
@@ -668,53 +835,22 @@ class Vec[T, N: Static[int]]:
         %1 = select <{=N} x i1> %mask, <{=N} x {=T}> %0, <{=N} x {=T}> %self
         ret <{=N} x {=T}> %1
     
+    @llvm
+    def sub_if(self: Vec[T, N], other: T, mask: Vec[u1, N]) -> Vec[T, N]:
+        %0 = insertelement <{=N} x {=T}> undef, {=T} %other, i32 0
+        %1 = shufflevector <{=N} x {=T}> %0, <{=N} x {=T}> undef, <{=N} x i32> zeroinitializer
+        %2 = sub <{=N} x {=T}> %self, %1
+        %3 = select <{=N} x i1> %mask, <{=N} x {=T}> %2, <{=N} x {=T}> %self
+        ret <{=N} x {=T}> %3
+    
     # Gather-scatter
-    # TODO: Implement getitem once the Static param bug is fixed
     @llvm
-    def get0(self: Vec[T, N]) -> T:
-        %0 = extractelement <{=N} x {=T}> %self, i32 0
+    def __getitem__(self: Vec[T, N], idx) -> T:
+        %0 = extractelement <{=N} x {=T}> %self, i64 %idx
         ret {=T} %0
     
-    @llvm
-    def get1(self: Vec[T, N]) -> T:
-        %0 = extractelement <{=N} x {=T}> %self, i32 1
-        ret {=T} %0
-    
-    @llvm
-    def get2(self: Vec[T, N]) -> T:
-        %0 = extractelement <{=N} x {=T}> %self, i32 2
-        ret {=T} %0
-    
-    @llvm
-    def get3(self: Vec[T, N]) -> T:
-        %0 = extractelement <{=N} x {=T}> %self, i32 3
-        ret {=T} %0
-    
-    @llvm
-    def get4(self: Vec[T, N]) -> T:
-        %0 = extractelement <{=N} x {=T}> %self, i32 4
-        ret {=T} %0
-    
-    @llvm
-    def get5(self: Vec[T, N]) -> T:
-        %0 = extractelement <{=N} x {=T}> %self, i32 5
-        ret {=T} %0
-    
-    @llvm
-    def get6(self: Vec[T, N]) -> T:
-        %0 = extractelement <{=N} x {=T}> %self, i32 6
-        ret {=T} %0
-    
-    @llvm
-    def get7(self: Vec[T, N]) -> T:
-        %0 = extractelement <{=N} x {=T}> %self, i32 7
-        ret {=T} %0
-
-    def scatter(self: Vec[T, 4]) -> List[T]:
-        return [self.get0(), self.get1(), self.get2(), self.get3()]
-    
-    def scatter(self: Vec[T, 8]) -> List[T]:
-        return [self.get0(), self.get1(), self.get2(), self.get3(), self.get4(), self.get5(), self.get6(), self.get7()]
+    def scatter(self: Vec[T, N]) -> List[T]:
+        return [self[i] for i in range(N)]
     
     # Misc
     def copy(self: Vec[T, N]) -> Vec[T, N]:

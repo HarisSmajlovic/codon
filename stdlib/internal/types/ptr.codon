@@ -55,6 +55,11 @@ class Ptr:
         %0 = getelementptr {=T}, ptr %self, i64 %index
         store {=T} %what, ptr %0
         ret {} {}
+    
+    @llvm
+    def store(self, what: T) -> None:
+        store {=T} %what, ptr %self
+        ret {} {}
 
     @pure
     @derives
