@@ -1,4 +1,4 @@
-# Copyright (C) 2022 Exaloop Inc. <https://exaloop.io>
+# Copyright (C) 2022-2023 Exaloop Inc. <https://exaloop.io>
 
 from internal.gc import free, register_finalizer, seq_alloc, seq_alloc_atomic, seq_gc_add_roots
 
@@ -10,6 +10,8 @@ def seq_check_errno() -> str:
 from C import seq_print(str)
 from C import exit(int)
 from C import malloc(int) -> cobj as c_malloc
+
+__vtable_size__ = 0
 
 @extend
 class __internal__:
@@ -438,8 +440,11 @@ class Function:
        return __internal__.raw_type_str(self.__raw__(), "function")
 
     @llvm
-    def __call__(self, *args) -> TR:
+    def __call_internal__(self: Function[T, TR], args: T) -> TR:
         noop  # compiler will populate this one
+
+    def __call__(self, *args) -> TR:
+        return Function.__call_internal__(self, args)
 
 __vtables__ = __internal__.class_init_vtables()
 def _____(): __vtables__  # make it global!

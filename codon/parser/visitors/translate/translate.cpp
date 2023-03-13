@@ -1,4 +1,4 @@
-// Copyright (C) 2022 Exaloop Inc. <https://exaloop.io>
+// Copyright (C) 2022-2023 Exaloop Inc. <https://exaloop.io>
 
 #include "translate.h"
 
@@ -7,11 +7,11 @@
 #include <string>
 #include <vector>
 
+#include "codon/cir/transform/parallel/schedule.h"
+#include "codon/cir/util/cloning.h"
 #include "codon/parser/ast.h"
 #include "codon/parser/common.h"
 #include "codon/parser/visitors/translate/translate_ctx.h"
-#include "codon/sir/transform/parallel/schedule.h"
-#include "codon/sir/util/cloning.h"
 
 using codon::ir::cast;
 using codon::ir::transform::parallel::OMPSched;
@@ -170,7 +170,10 @@ void TranslateVisitor::visit(StringExpr *expr) {
 void TranslateVisitor::visit(IdExpr *expr) {
   auto val = ctx->find(expr->value);
   seqassert(val, "cannot find '{}'", expr->value);
-  if (auto *v = val->getVar())
+  if (expr->value == "__vtable_size__")
+    result = make<ir::IntConst>(expr, ctx->cache->classRealizationCnt + 2,
+                                getType(expr->getType()));
+  else if (auto *v = val->getVar())
     result = make<ir::VarValue>(expr, v);
   else if (auto *f = val->getFunc())
     result = make<ir::VarValue>(expr, f);

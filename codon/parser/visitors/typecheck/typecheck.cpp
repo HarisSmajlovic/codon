@@ -1,4 +1,4 @@
-// Copyright (C) 2022 Exaloop Inc. <https://exaloop.io>
+// Copyright (C) 2022-2023 Exaloop Inc. <https://exaloop.io>
 
 #include "typecheck.h"
 
@@ -180,6 +180,34 @@ TypecheckVisitor::findBestMethod(const ClassTypePtr &typ, const std::string &mem
   std::vector<CallExpr::Arg> callArgs;
   for (auto &a : args) {
     callArgs.push_back({"", std::make_shared<NoneExpr>()}); // dummy expression
+    callArgs.back().value->setType(a);
+  }
+  auto methods = ctx->findMethod(typ->name, member, false);
+  auto m = findMatchingMethods(typ, methods, callArgs);
+  return m.empty() ? nullptr : m[0];
+}
+
+/// Select the best method indicated of an object that matches the given argument
+/// types. See @c findMatchingMethods for details.
+types::FuncTypePtr TypecheckVisitor::findBestMethod(const ClassTypePtr &typ,
+                                                    const std::string &member,
+                                                    const std::vector<ExprPtr> &args) {
+  std::vector<CallExpr::Arg> callArgs;
+  for (auto &a : args)
+    callArgs.push_back({"", a});
+  auto methods = ctx->findMethod(typ->name, member, false);
+  auto m = findMatchingMethods(typ, methods, callArgs);
+  return m.empty() ? nullptr : m[0];
+}
+
+/// Select the best method indicated of an object that matches the given argument
+/// types. See @c findMatchingMethods for details.
+types::FuncTypePtr TypecheckVisitor::findBestMethod(
+    const ClassTypePtr &typ, const std::string &member,
+    const std::vector<std::pair<std::string, types::TypePtr>> &args) {
+  std::vector<CallExpr::Arg> callArgs;
+  for (auto &[n, a] : args) {
+    callArgs.push_back({n, std::make_shared<NoneExpr>()}); // dummy expression
     callArgs.back().value->setType(a);
   }
   auto methods = ctx->findMethod(typ->name, member, false);

@@ -1,4 +1,4 @@
-// Copyright (C) 2022 Exaloop Inc. <https://exaloop.io>
+// Copyright (C) 2022-2023 Exaloop Inc. <https://exaloop.io>
 
 #include <memory>
 #include <string>
@@ -282,8 +282,20 @@ void SimplifyVisitor::visit(FunctionStmt *stmt) {
   // Expression to be used if function binding is modified by captures or decorators
   ExprPtr finalExpr = nullptr;
   // If there are captures, replace `fn` with `fn(cap1=cap1, cap2=cap2, ...)`
-  if (!captures.empty())
+  if (!captures.empty()) {
     finalExpr = N<CallExpr>(N<IdExpr>(stmt->name), partialArgs);
+    // Add updated self reference in case function is recursive!
+    auto pa = partialArgs;
+    for (auto &a : pa) {
+      if (!a.name.empty())
+        a.value = N<IdExpr>(a.name);
+      else
+        a.value = clone(a.value);
+    }
+    f->suite = N<SuiteStmt>(
+        N<AssignStmt>(N<IdExpr>(rootName), N<CallExpr>(N<IdExpr>(rootName), pa)),
+        suite);
+  }
 
   // Parse remaining decorators
   for (auto i = stmt->decorators.size(); i-- > 0;) {
@@ -322,8 +334,8 @@ ExprPtr SimplifyVisitor::makeAnonFn(std::vector<StmtPtr> suite,
     prependStmts->push_back(fs->stmts[0]);
     for (StmtPtr s = fs->stmts[1]; s;) {
       if (auto suite = s->getSuite()) {
-        // Suites can only occur when __internal__.undef is inserted for a partial call
-        // argument. Extract __internal__.undef checks and prepend them
+        // Suites can only occur when captures are inserted for a partial call
+        // argument.
         seqassert(suite->stmts.size() == 2, "invalid function transform");
         prependStmts->push_back(suite->stmts[0]);
         s = suite->stmts[1];

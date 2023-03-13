@@ -1,4 +1,4 @@
-# Copyright (C) 2022 Exaloop Inc. <https://exaloop.io>
+# Copyright (C) 2022-2023 Exaloop Inc. <https://exaloop.io>
 
 
 # TODO: Add join method to str
@@ -15,7 +15,7 @@ class str:
         return s
 
 
-@tuple
+@tuple(container=False)  # disallow default __getitem__
 class Vec[T, N: Static[int]]:
     ZERO_16x8i = Vec[u8,16](u8(0))
     FF_16x8i = Vec[u8,16](u8(0xff))
@@ -849,9 +849,6 @@ class Vec[T, N: Static[int]]:
         %0 = extractelement <{=N} x {=T}> %self, i64 %idx
         ret {=T} %0
     
-    def scatter(self: Vec[T, N]) -> List[T]:
-        return [self[i] for i in range(N)]
-    
     # Misc
     def copy(self: Vec[T, N]) -> Vec[T, N]:
         return self
@@ -860,6 +857,9 @@ class Vec[T, N: Static[int]]:
     def mask(self: Vec[T, N], mask: Vec[u1, N], other: Vec[T, N]) -> Vec[T, N]:
         %0 = select <{=N} x i1> %mask, <{=N} x {=T}> %self, <{=N} x {=T}> %other
         ret <{=N} x {=T}> %0
+
+    def scatter(self: Vec[T, N]) -> List[T]:
+        return [self[i] for i in staticrange(N)]
 
 
 u8x16 = Vec[u8, 16]

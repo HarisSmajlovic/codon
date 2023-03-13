@@ -1,4 +1,4 @@
-# Copyright (C) 2022 Exaloop Inc. <https://exaloop.io>
+# Copyright (C) 2022-2023 Exaloop Inc. <https://exaloop.io>
 
 import internal.gc as gc
 
@@ -23,13 +23,6 @@ class List:
     def __init__(self, capacity: int):
         self.arr = Array[T](capacity)
         self.len = 0
-
-    def __init__(self, dummy: bool, other):
-        """Dummy __init__ used for list comprehension optimization"""
-        if hasattr(other, "__len__"):
-            self.__init__(other.__len__())
-        else:
-            self.__init__()
 
     def __init__(self, arr: Array[T], len: int):
         self.arr = arr
