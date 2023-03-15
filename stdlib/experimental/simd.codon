@@ -827,7 +827,6 @@ class Vec[T, N: Static[int]]:
         %0 = uitofp <{=N} x {=T}> %self to <{=N} x double>
         ret <{=N} x double> %0
     
-    
     # Predication intrinsics
     @llvm
     def sub_if(self: Vec[T, N], other: Vec[T, N], mask: Vec[u1, N]) -> Vec[T, N]:
