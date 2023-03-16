@@ -2,7 +2,6 @@
 
 #include "jupyter.h"
 
-#ifdef CODON_JUPYTER
 #include <codecvt>
 #include <dirent.h>
 #include <fcntl.h>
@@ -141,4 +140,3 @@ int startJupyterKernel(const std::string &argv0,
 }
 
 } // namespace codon
-#endif

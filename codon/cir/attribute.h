@@ -64,6 +64,26 @@ private:
   std::ostream &doFormat(std::ostream &os) const override { return os << info; }
 };
 
+/// Attribute containing docstring from source
+struct DocstringAttribute : public Attribute {
+  static const std::string AttributeName;
+
+  /// the docstring
+  std::string docstring;
+
+  DocstringAttribute() = default;
+  /// Constructs a DocstringAttribute.
+  /// @param docstring the docstring
+  explicit DocstringAttribute(const std::string &docstring) : docstring(docstring) {}
+
+  std::unique_ptr<Attribute> clone(util::CloneVisitor &cv) const override {
+    return std::make_unique<DocstringAttribute>(*this);
+  }
+
+private:
+  std::ostream &doFormat(std::ostream &os) const override { return os << docstring; }
+};
+
 /// Attribute containing function information
 struct KeyValueAttribute : public Attribute {
   static const std::string AttributeName;
@@ -110,6 +130,26 @@ struct MemberAttribute : public Attribute {
   std::unique_ptr<Attribute> clone(util::CloneVisitor &cv) const override {
     return std::make_unique<MemberAttribute>(*this);
   }
+
+private:
+  std::ostream &doFormat(std::ostream &os) const override;
+};
+
+/// Attribute used to mark Python wrappers of Codon functions
+struct PythonWrapperAttribute : public Attribute {
+  static const std::string AttributeName;
+
+  /// the function being wrapped
+  Func *original;
+
+  /// Constructs a PythonWrapperAttribute.
+  /// @param original the function being wrapped
+  explicit PythonWrapperAttribute(Func *original) : original(original) {}
+
+  bool needsClone() const override { return false; }
+
+  std::unique_ptr<Attribute> clone(util::CloneVisitor &cv) const override;
+  std::unique_ptr<Attribute> forceClone(util::CloneVisitor &cv) const override;
 
 private:
   std::ostream &doFormat(std::ostream &os) const override;

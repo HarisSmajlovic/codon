@@ -543,6 +543,8 @@ std::pair<bool, ExprPtr> TypecheckVisitor::transformSpecialCall(CallExpr *expr) 
     return {true, transformHasAttr(expr)};
   } else if (val == "getattr") {
     return {true, transformGetAttr(expr)};
+  } else if (val == "setattr") {
+    return {true, transformSetAttr(expr)};
   } else if (val == "type.__new__:0") {
     return {true, transformTypeFn(expr)};
   } else if (val == "compile_error") {
@@ -553,6 +555,8 @@ std::pair<bool, ExprPtr> TypecheckVisitor::transformSpecialCall(CallExpr *expr) 
     return {true, transformRealizedFn(expr)};
   } else if (val == "__static_print__") {
     return {false, transformStaticPrintFn(expr)};
+  } else if (auto e = transformInternalStaticFn(expr)) {
+    return {true, e};
   } else {
     return {false, nullptr};
   }
@@ -827,6 +831,18 @@ ExprPtr TypecheckVisitor::transformGetAttr(CallExpr *expr) {
   return transform(N<DotExpr>(expr->args[0].value, staticTyp->evaluate().getString()));
 }
 
+/// Transform setattr method to a AssignMemberStmt.
+ExprPtr TypecheckVisitor::transformSetAttr(CallExpr *expr) {
+  auto funcTyp = expr->expr->type->getFunc();
+  auto staticTyp = funcTyp->funcGenerics[0].type->getStatic();
+  if (!staticTyp->canRealize())
+    return nullptr;
+  return transform(N<StmtExpr>(N<AssignMemberStmt>(expr->args[0].value,
+                                                   staticTyp->evaluate().getString(),
+                                                   expr->args[1].value),
+                               N<CallExpr>(N<IdExpr>("NoneType"))));
+}
+
 /// Raise a compiler error.
 ExprPtr TypecheckVisitor::transformCompileError(CallExpr *expr) {
   auto funcTyp = expr->expr->type->getFunc();
@@ -856,6 +872,7 @@ ExprPtr TypecheckVisitor::transformTupleFn(CallExpr *expr) {
 ExprPtr TypecheckVisitor::transformTypeFn(CallExpr *expr) {
   expr->markType();
   transform(expr->args[0].value);
+
   unify(expr->type, expr->args[0].value->getType());
 
   if (!realize(expr->type))
@@ -892,6 +909,90 @@ ExprPtr TypecheckVisitor::transformStaticPrintFn(CallExpr *expr) {
                args[i].value->type ? args[i].value->type->debugString(1) : "-");
   }
   return nullptr;
+}
+
+// Transform internal.static calls
+ExprPtr TypecheckVisitor::transformInternalStaticFn(CallExpr *expr) {
+  if (expr->expr->isId("std.internal.static.fn_can_call")) {
+    expr->staticValue.type = StaticValue::INT;
+    auto typ = expr->args[0].value->getType()->getClass();
+    if (!typ)
+      return nullptr;
+
+    auto fn = expr->args[0].value->type->getFunc();
+    if (!fn)
+      error("expected a function, got '{}'", expr->args[0].value->type->prettyString());
+
+    auto inargs = unpackTupleTypes(expr->args[1].value);
+    auto kwargs = unpackTupleTypes(expr->args[2].value);
+    seqassert(inargs && kwargs, "bad call to fn_can_call");
+
+    std::vector<CallExpr::Arg> callArgs;
+    for (auto &a : *inargs) {
+      callArgs.push_back({a.first, std::make_shared<NoneExpr>()}); // dummy expression
+      callArgs.back().value->setType(a.second);
+    }
+    for (auto &a : *kwargs) {
+      callArgs.push_back({a.first, std::make_shared<NoneExpr>()}); // dummy expression
+      callArgs.back().value->setType(a.second);
+    }
+    return transform(N<BoolExpr>(canCall(fn, callArgs) >= 0));
+  } else if (expr->expr->isId("std.internal.static.fn_arg_has_type")) {
+    expr->staticValue.type = StaticValue::INT;
+    auto fn = expr->args[0].value->type->getFunc();
+    if (!fn)
+      error("expected a function, got '{}'", expr->args[0].value->type->prettyString());
+    auto idx = ctx->getStaticInt(expr->expr->type->getFunc()->funcGenerics[0].type);
+    seqassert(idx, "expected a static integer");
+    auto &args = fn->getArgTypes();
+    return transform(
+        N<BoolExpr>(*idx >= 0 && *idx < args.size() && args[*idx]->canRealize()));
+  } else if (expr->expr->isId("std.internal.static.fn_arg_get_type")) {
+    auto fn = expr->args[0].value->type->getFunc();
+    if (!fn)
+      error("expected a function, got '{}'", expr->args[0].value->type->prettyString());
+    auto idx = ctx->getStaticInt(expr->expr->type->getFunc()->funcGenerics[0].type);
+    seqassert(idx, "expected a static integer");
+    auto &args = fn->getArgTypes();
+    if (*idx < 0 || *idx >= args.size() || !args[*idx]->canRealize())
+      error("argument does not have type");
+    return transform(NT<IdExpr>(args[*idx]->realizedName()));
+  } else if (expr->expr->isId("std.internal.static.fn_args")) {
+    auto fn = expr->args[0].value->type->getFunc();
+    if (!fn)
+      error("expected a function, got '{}'", expr->args[0].value->type->prettyString());
+    std::vector<ExprPtr> v;
+    for (size_t i = 0; i < fn->ast->args.size(); i++) {
+      auto n = fn->ast->args[i].name;
+      trimStars(n);
+      n = ctx->cache->rev(n);
+      v.push_back(N<StringExpr>(n));
+    }
+    return transform(N<TupleExpr>(v));
+  } else if (expr->expr->isId("std.internal.static.fn_has_default")) {
+    expr->staticValue.type = StaticValue::INT;
+    auto fn = expr->args[0].value->type->getFunc();
+    if (!fn)
+      error("expected a function, got '{}'", expr->args[0].value->type->prettyString());
+    auto idx = ctx->getStaticInt(expr->expr->type->getFunc()->funcGenerics[0].type);
+    seqassert(idx, "expected a static integer");
+    auto &args = fn->ast->args;
+    if (*idx < 0 || *idx >= args.size())
+      error("argument out of bounds");
+    return transform(N<IntExpr>(args[*idx].defaultValue != nullptr));
+  } else if (expr->expr->isId("std.internal.static.fn_get_default")) {
+    auto fn = expr->args[0].value->type->getFunc();
+    if (!fn)
+      error("expected a function, got '{}'", expr->args[0].value->type->prettyString());
+    auto idx = ctx->getStaticInt(expr->expr->type->getFunc()->funcGenerics[0].type);
+    seqassert(idx, "expected a static integer");
+    auto &args = fn->ast->args;
+    if (*idx < 0 || *idx >= args.size())
+      error("argument out of bounds");
+    return transform(args[*idx].defaultValue);
+  } else {
+    return nullptr;
+  }
 }
 
 /// Get the list that describes the inheritance hierarchy of a given type.

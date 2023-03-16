@@ -1,0 +1,25 @@
+# Copyright (C) 2022-2023 Exaloop Inc. <https://exaloop.io>
+
+def fn_overloads(T: type, F: Static[str]):
+    pass
+
+def fn_args(F):  # function: (i, name)
+    pass
+
+def fn_arg_has_type(F, i: Static[int]):
+    pass
+
+def fn_arg_get_type(F, i: Static[int]):
+    pass
+
+def fn_can_call(F, *args, **kwargs):
+    pass
+
+def fn_has_default(F, i: Static[int]):
+    pass
+
+def fn_get_default(F, i: Static[int]):
+    pass
+
+def class_args(T: type):
+    pass

@@ -470,6 +470,15 @@ size_t FunctionStmt::getKwStarArgs() const {
   }
   return i;
 }
+std::string FunctionStmt::getDocstr() {
+  if (auto s = suite->firstInBlock()) {
+    if (auto e = s->getExpr()) {
+      if (auto ss = e->expr->getString())
+        return ss->getValue();
+    }
+  }
+  return "";
+}
 
 ClassStmt::ClassStmt(std::string name, std::vector<Param> args, StmtPtr suite,
                      std::vector<ExprPtr> decorators, std::vector<ExprPtr> baseClasses,
@@ -555,6 +564,8 @@ void ClassStmt::parseDecorators() {
   for (auto &d : decorators) {
     if (d->isId("deduce")) {
       attributes.customAttr.insert("deduce");
+    } else if (d->isId("__notuple__")) {
+      attributes.customAttr.insert("__notuple__");
     } else if (auto c = d->getCall()) {
       if (c->expr->isId(Attr::Tuple)) {
         attributes.set(Attr::Tuple);
@@ -643,6 +654,15 @@ bool ClassStmt::isClassVar(const Param &p) {
   if (auto i = p.type->getIndex())
     return i->expr->isId("ClassVar");
   return false;
+}
+std::string ClassStmt::getDocstr() {
+  if (auto s = suite->firstInBlock()) {
+    if (auto e = s->getExpr()) {
+      if (auto ss = e->expr->getString())
+        return ss->getValue();
+    }
+  }
+  return "";
 }
 
 YieldFromStmt::YieldFromStmt(ExprPtr expr) : Stmt(), expr(std::move(expr)) {}

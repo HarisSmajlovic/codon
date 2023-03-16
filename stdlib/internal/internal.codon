@@ -1,6 +1,9 @@
 # Copyright (C) 2022-2023 Exaloop Inc. <https://exaloop.io>
 
-from internal.gc import free, register_finalizer, seq_alloc, seq_alloc_atomic, seq_gc_add_roots
+from internal.gc import (
+    free, register_finalizer, seq_alloc,
+    seq_alloc_atomic, seq_gc_add_roots, alloc_uncollectable
+)
 
 @pure
 @C
@@ -15,6 +18,11 @@ __vtable_size__ = 0
 
 @extend
 class __internal__:
+    def yield_final(val):
+        pass
+    def yield_in_no_suspend(T: type) -> T:
+        pass
+
     @pure
     @derives
     @llvm
@@ -448,3 +456,15 @@ class Function:
 
 __vtables__ = __internal__.class_init_vtables()
 def _____(): __vtables__  # make it global!
+
+
+@tuple
+class PyObject:
+    refcnt: int
+    pytype: Ptr[byte]
+
+
+@tuple
+class PyWrapper[T]:
+    head: PyObject
+    data: T
