@@ -690,11 +690,11 @@ class Vec[T, N: Static[int]]:
         ret <{=N} x {=T}> %2
     
     def __mul__(self: Vec[T, N], other) -> Vec[T, N]:
-        if isinstance(T, u8) or isinstance(T, u64):
+        if isinstance(T, u8) or isinstance(T, u64) or isinstance(T, u128):
             return self.mul(other)
         if isinstance(T, f32) or isinstance(T, f64):
             return self.fmul(other)
-        compile_error("invalid SIMD vector subtraction")
+        compile_error("invalid SIMD vector multiplication")
     
     # TODO: (Codon bug) The method bellow cannot be typechecked if N is generic
     # @llvm
@@ -762,7 +762,7 @@ class Vec[T, N: Static[int]]:
     def zext_mul(self: Vec[u64, N], other: Vec[u64, N]) -> Vec[u128, N]:
         %0 = zext <{=N} x i64> %self to <{=N} x i128>
         %1 = zext <{=N} x i64> %other to <{=N} x i128>
-        %2 = mul <{=N} x i128> %0, %1
+        %2 = mul nuw <{=N} x i128> %0, %1
         ret <{=N} x i128> %2
     
     @llvm
@@ -771,11 +771,25 @@ class Vec[T, N: Static[int]]:
         %1 = insertelement <{=N} x i64> undef, i64 %other, i32 0
         %2 = shufflevector <{=N} x i64> %1, <{=N} x i64> undef, <{=N} x i32> zeroinitializer
         %3 = zext <{=N} x i64> %2 to <{=N} x i128>
-        %4 = mul <{=N} x i128> %0, %3
+        %4 = mul nuw <{=N} x i128> %0, %3
         ret <{=N} x i128> %4
-    
-    def mulhi(self: Vec[u64, N], other) -> Vec[u64, N]:
-        return self.zext_mul(other).shift_half().trunc_half()
+
+    @nocapture
+    @llvm
+    def mulx(self: Vec[u64, N], other: Vec[u64, N], hi: Ptr[Vec[u64, N]]) -> Vec[u64, N]:
+        %0 = zext <{=N} x i64> %self to <{=N} x i128>
+        %1 = zext <{=N} x i64> %other to <{=N} x i128>
+        %2 = mul nuw <{=N} x i128> %0, %1
+        %3 = lshr <{=N} x i128> %2, <i128 64, i128 64, i128 64, i128 64, i128 64, i128 64, i128 64, i128 64>
+        %4 = trunc <{=N} x i128> %3 to <{=N} x i64>
+        store <{=N} x i64> %4, <{=N} x i64>* %hi, align 8
+        %5 = trunc <{=N} x i128> %2 to <{=N} x i64>
+        ret <{=N} x i64> %5
+
+    def mulhi(self: Vec[u64, N], other: Vec[u64, N]) -> Vec[u64, N]:
+        hi = Ptr[Vec[u64, N]](1)
+        self.mulx(other, hi)
+        return hi[0]
     
     @llvm
     def sqrt(self: Vec[f64, N]) -> Vec[f64, N]:
@@ -811,6 +825,14 @@ class Vec[T, N: Static[int]]:
     def trunc_half(self: Vec[u128, N]) -> Vec[u64, N]:
         %0 = trunc <{=N} x i128> %self to <{=N} x i64>
         ret <{=N} x i64> %0
+    
+    @llvm
+    def shift_trunc_half(self: Vec[u128, N]) -> Vec[u64, N]:
+        %0 = insertelement <{=N} x i128> undef, i128 64, i32 0
+        %1 = shufflevector <{=N} x i128> %0, <{=N} x i128> undef, <{=N} x i32> zeroinitializer
+        %2 = lshr <{=N} x i128> %self, %1
+        %3 = trunc <{=N} x i128> %2 to <{=N} x i64>
+        ret <{=N} x i64> %3
     
     @llvm
     def to_u64(self: Vec[f64, N]) -> Vec[u64, N]:
