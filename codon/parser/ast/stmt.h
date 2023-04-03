@@ -383,7 +383,7 @@ struct TryStmt : public Stmt {
 struct ThrowStmt : public Stmt {
   ExprPtr expr;
   // True if a statement was transformed during type-checking stage
-  // (to avoid setting up ExcHeader multuple times).
+  // (to avoid setting up ExcHeader multiple times).
   bool transformed;
 
   explicit ThrowStmt(ExprPtr expr, bool transformed = false);
@@ -482,6 +482,7 @@ struct FunctionStmt : public Stmt {
 
   FunctionStmt *getFunction() override { return this; }
   std::string getDocstr();
+  std::unordered_set<std::string> getNonInferrableGenerics();
 };
 
 /// Class statement (@(attributes...) class name[generics...]: args... ; suite).
