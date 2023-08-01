@@ -1,6 +1,14 @@
 # Copyright (C) 2022-2023 Exaloop Inc. <https://exaloop.io>
 
 
+# Temp types naming patch
+f64 = float
+i1 = Int[1]
+u1 = UInt[1]
+i128 = Int[128]
+u128 = UInt[128]
+
+
 # TODO: Add join method to str
 @extend
 class str:
