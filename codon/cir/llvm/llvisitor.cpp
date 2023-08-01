@@ -440,14 +440,6 @@ void LLVMVisitor::setupGlobalCtorForSharedLibrary() {
     main->setName(MAIN_UNCLASH); // avoid clash with other main
   }
 
-  auto *main = M->getFunction(MAIN_UNCLASH);
-  if (!main) {
-    main = M->getFunction("main");
-    if (!main)
-      return;
-    main->setName(MAIN_UNCLASH); // avoid clash with other main
-  }
-
   auto *ctorFuncTy = llvm::FunctionType::get(B->getVoidTy(), {}, /*isVarArg=*/false);
   auto *ctorEntryTy = llvm::StructType::get(B->getInt32Ty(), ctorFuncTy->getPointerTo(),
                                             B->getInt8PtrTy());
