@@ -26,6 +26,9 @@ const std::string EXPORT_ATTR = "std.internal.attributes.export";
 const std::string INLINE_ATTR = "std.internal.attributes.inline";
 const std::string NOINLINE_ATTR = "std.internal.attributes.noinline";
 const std::string GPU_KERNEL_ATTR = "std.gpu.kernel";
+
+const std::string MAIN_UNCLASH = ".main.unclash";
+const std::string MAIN_CTOR = ".main.ctor";
 } // namespace
 
 llvm::DIFile *LLVMVisitor::DebugInfo::getFile(const std::string &path) {
@@ -426,18 +429,32 @@ void executeCommand(const std::vector<std::string> &args) {
 
 void LLVMVisitor::setupGlobalCtorForSharedLibrary() {
   const std::string llvmCtor = "llvm.global_ctors";
-  auto *main = M->getFunction("main");
-  if (M->getNamedValue(llvmCtor) || !main)
+  if (M->getNamedValue(llvmCtor))
     return;
-  main->setName(".main"); // avoid clash with other main
+
+  auto *main = M->getFunction(MAIN_UNCLASH);
+  if (!main) {
+    main = M->getFunction("main");
+    if (!main)
+      return;
+    main->setName(MAIN_UNCLASH); // avoid clash with other main
+  }
+
+  auto *main = M->getFunction(MAIN_UNCLASH);
+  if (!main) {
+    main = M->getFunction("main");
+    if (!main)
+      return;
+    main->setName(MAIN_UNCLASH); // avoid clash with other main
+  }
 
   auto *ctorFuncTy = llvm::FunctionType::get(B->getVoidTy(), {}, /*isVarArg=*/false);
   auto *ctorEntryTy = llvm::StructType::get(B->getInt32Ty(), ctorFuncTy->getPointerTo(),
                                             B->getInt8PtrTy());
   auto *ctorArrayTy = llvm::ArrayType::get(ctorEntryTy, 1);
 
-  auto *ctor = cast<llvm::Function>(
-      M->getOrInsertFunction(".main.ctor", ctorFuncTy).getCallee());
+  auto *ctor =
+      cast<llvm::Function>(M->getOrInsertFunction(MAIN_CTOR, ctorFuncTy).getCallee());
   ctor->setLinkage(llvm::GlobalValue::InternalLinkage);
   auto *entry = llvm::BasicBlock::Create(*context, "entry", ctor);
   B->SetInsertPoint(entry);
@@ -973,6 +990,10 @@ void LLVMVisitor::writeToPythonExtension(const PyModule &pymod,
     }
 
     auto *refType = cast<types::RefType>(pytype.type);
+    if (refType) {
+      seqassertn(!refType->isPolymorphic(),
+                 "Python extension types cannot be polymorphic");
+    }
     auto *llvmType = getLLVMType(pytype.type);
     auto *objectType = llvm::StructType::get(pyObjectType, llvmType);
     auto codonSize =
@@ -1118,7 +1139,7 @@ void LLVMVisitor::writeToPythonExtension(const PyModule &pymod,
   B->SetInsertPoint(block);
 
   if (auto *main = M->getFunction("main")) {
-    main->setName(".main");
+    main->setName(MAIN_UNCLASH);
     B->CreateCall({main->getFunctionType(), main}, {zero32, null});
   }
 
@@ -1457,8 +1478,10 @@ void LLVMVisitor::visit(const Module *x) {
   auto *strlenFunc = llvm::cast<llvm::Function>(
       M->getOrInsertFunction("strlen", B->getInt64Ty(), B->getInt8PtrTy()).getCallee());
 
+  // check if main exists already as an exported function
+  const std::string mainName = M->getFunction("main") ? MAIN_UNCLASH : "main";
   auto *canonicalMainFunc = llvm::cast<llvm::Function>(
-      M->getOrInsertFunction("main", B->getInt32Ty(), B->getInt32Ty(),
+      M->getOrInsertFunction(mainName, B->getInt32Ty(), B->getInt32Ty(),
                              B->getInt8PtrTy()->getPointerTo())
           .getCallee());
 
@@ -1712,14 +1735,6 @@ void LLVMVisitor::visit(const InternalFunc *x) {
     } else {
       result = B->CreateZExtOrTrunc(args[0], getLLVMType(intNType));
     }
-  }
-
-  else if (internalFuncMatches<RefType>("__new__", x)) {
-    auto *refType = cast<RefType>(parentType);
-    auto allocFunc = makeAllocFunc(refType->getContents()->isAtomic());
-    llvm::Value *size = B->getInt64(
-        M->getDataLayout().getTypeAllocSize(getLLVMType(refType->getContents())));
-    result = B->CreateCall(allocFunc, size);
   }
 
   else if (internalFuncMatches<GeneratorType, GeneratorType>("__promise__", x)) {
@@ -2100,7 +2115,12 @@ llvm::Type *LLVMVisitor::getLLVMType(types::Type *t) {
   }
 
   if (auto *x = cast<types::RefType>(t)) {
-    return B->getInt8PtrTy();
+    auto *p = B->getInt8PtrTy();
+    if (x->isPolymorphic()) {
+      return llvm::StructType::get(*context, {p, p});
+    } else {
+      return p;
+    }
   }
 
   if (auto *x = cast<types::FuncType>(t)) {
@@ -2251,8 +2271,39 @@ llvm::DIType *LLVMVisitor::getDITypeHelper(
   }
 
   if (auto *x = cast<types::RefType>(t)) {
-    return db.builder->createReferenceType(llvm::dwarf::DW_TAG_reference_type,
-                                           getDITypeHelper(x->getContents(), cache));
+    auto *ref = db.builder->createReferenceType(
+        llvm::dwarf::DW_TAG_reference_type, getDITypeHelper(x->getContents(), cache));
+    if (x->isPolymorphic()) {
+      auto *p = B->getInt8PtrTy();
+      auto pointerSizeInBits = layout.getTypeAllocSizeInBits(p);
+      auto *rtti = db.builder->createBasicType("rtti", pointerSizeInBits,
+                                               llvm::dwarf::DW_ATE_address);
+      auto *structType = llvm::StructType::get(p, p);
+      auto *structLayout = layout.getStructLayout(structType);
+      auto *srcInfo = getSrcInfo(x);
+      llvm::DIFile *file = db.getFile(srcInfo->file);
+      std::vector<llvm::Metadata *> members;
+
+      llvm::DICompositeType *diType = db.builder->createStructType(
+          file, x->getName(), file, srcInfo->line, structLayout->getSizeInBits(),
+          /*AlignInBits=*/0, llvm::DINode::FlagZero, /*DerivedFrom=*/nullptr,
+          db.builder->getOrCreateArray(members));
+
+      members.push_back(db.builder->createMemberType(
+          diType, "data", file, srcInfo->line, pointerSizeInBits,
+          /*AlignInBits=*/0, structLayout->getElementOffsetInBits(0),
+          llvm::DINode::FlagZero, ref));
+
+      members.push_back(db.builder->createMemberType(
+          diType, "rtti", file, srcInfo->line, pointerSizeInBits,
+          /*AlignInBits=*/0, structLayout->getElementOffsetInBits(1),
+          llvm::DINode::FlagZero, rtti));
+
+      db.builder->replaceArrays(diType, db.builder->getOrCreateArray(members));
+      return diType;
+    } else {
+      return ref;
+    }
   }
 
   if (auto *x = cast<types::FuncType>(t)) {
@@ -3014,8 +3065,12 @@ void LLVMVisitor::visit(const ExtractInstr *x) {
 
   process(x->getVal());
   B->SetInsertPoint(block);
-  if (auto *refType = cast<types::RefType>(memberedType))
+  if (auto *refType = cast<types::RefType>(memberedType)) {
+    if (refType->isPolymorphic())
+      value =
+          B->CreateExtractValue(value, 0); // polymorphic ref type is tuple (data, rtti)
     value = B->CreateLoad(getLLVMType(refType->getContents()), value);
+  }
   value = B->CreateExtractValue(value, index);
 }
 
@@ -3031,6 +3086,8 @@ void LLVMVisitor::visit(const InsertInstr *x) {
   llvm::Value *rhs = value;
 
   B->SetInsertPoint(block);
+  if (refType->isPolymorphic())
+    lhs = B->CreateExtractValue(lhs, 0); // polymorphic ref type is tuple (data, rtti)
   llvm::Value *load = B->CreateLoad(getLLVMType(refType->getContents()), lhs);
   load = B->CreateInsertValue(load, rhs, index);
   B->CreateStore(load, lhs);
@@ -3061,6 +3118,9 @@ void LLVMVisitor::visit(const TypePropertyInstr *x) {
     break;
   case TypePropertyInstr::Property::IS_ATOMIC:
     value = B->getInt8(x->getInspectType()->isAtomic() ? 1 : 0);
+    break;
+  case TypePropertyInstr::Property::IS_CONTENT_ATOMIC:
+    value = B->getInt8(x->getInspectType()->isContentAtomic() ? 1 : 0);
     break;
   default:
     seqassertn(0, "unknown type property");

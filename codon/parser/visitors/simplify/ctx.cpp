@@ -16,16 +16,16 @@ using namespace codon::error;
 namespace codon::ast {
 
 SimplifyContext::SimplifyContext(std::string filename, Cache *cache)
-    : Context<SimplifyItem>(move(filename)), cache(cache),
-      isStdlibLoading(false), moduleName{ImportFile::PACKAGE, "", ""},
-      isConditionalExpr(false), allowTypeOf(true) {
+    : Context<SimplifyItem>(std::move(filename)), cache(cache), isStdlibLoading(false),
+      moduleName{ImportFile::PACKAGE, "", ""}, isConditionalExpr(false),
+      allowTypeOf(true) {
   bases.emplace_back(Base(""));
   scope.blocks.push_back(scope.counter = 0);
 }
 
 SimplifyContext::Base::Base(std::string name, Attr *attributes)
-    : name(move(name)), attributes(attributes), deducedMembers(nullptr), selfName(),
-      captures(nullptr), pyCaptures(nullptr) {}
+    : name(std::move(name)), attributes(attributes), deducedMembers(nullptr),
+      selfName(), captures(nullptr), pyCaptures(nullptr) {}
 
 void SimplifyContext::add(const std::string &name, const SimplifyContext::Item &var) {
   auto v = find(name);
@@ -153,6 +153,7 @@ SimplifyContext::Item SimplifyContext::findDominatingBinding(const std::string &
         (*lastGood)->importPath);
     item->accessChecked = {(*lastGood)->scope};
     lastGood = it->second.insert(++lastGood, item);
+    stack.front().push_back(name);
     // Make sure to prepend a binding declaration: `var` and `var__used__ = False`
     // to the dominating scope.
     scope.stmts[scope.blocks[prefix - 1]].push_back(std::make_unique<AssignStmt>(

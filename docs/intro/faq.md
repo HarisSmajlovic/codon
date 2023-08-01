@@ -16,7 +16,22 @@ codebases might require modifications to be run through the Codon compiler. For 
 of Python's modules are not yet implemented within Codon, and a few of Python's dynamic features
 are disallowed. The Codon compiler produces detailed error messages to help identify and resolve
 any incompatibilities. Codon supports seamless [Python interoperability](../interop/python.md) to
-handle cases where specific Python libraries or dynamism are required.
+handle cases where specific Python libraries or dynamism are required, and also supports writing
+[Python extension modules](../interop/pyext.md) that can be imported and used from larger Python
+codebases.
+
+## Why Codon?
+
+Python is arguably the world's most popular programming language, and is gradually becoming the
+*lingua franca* particularly amongst non-technical or non-CS practitioners in numerous fields.
+It provides a readable, clean syntax, is easy to learn, and has an unmatched ecosystem of libraries.
+However, Python's achilles heel has always been performance: a typical codebase in pure Python is
+orders of magnitude slower than its C/C++/Rust counterpart.
+
+Codon bridges the gap between Python's simplicity and ease-of-use, and the performance of low-level
+languages like C++ or Rust, by using [novel compiler and type checking techniques](https://dl.acm.org/doi/abs/10.1145/3578360.3580275)
+to statically compile code ahead-of-time, avoiding all of vanilla Python's runtime overhead and
+performance drawbacks.
 
 ## How does Codon compare to...
 
@@ -33,6 +48,10 @@ handle cases where specific Python libraries or dynamism are required.
   Codon differs in a few places in order to eliminate any dynamic runtime or virtual
   machine, and thereby attain much better performance.
 
+- **Cython?** Like Cython, Codon has a [Python-extension build mode](../interop/pyext.md) that
+  compiles to Python extension modules, allowing Codon-compiled code to be imported and called
+  from plain Python.
+
 - **C++?** Codon often generates the same code as an equivalent C or C++ program. Codon
   can sometimes generate *better* code than C/C++ compilers for a variety of reasons, such
   as better container implementations, the fact that Codon does not use object files and
@@ -43,6 +62,12 @@ handle cases where specific Python libraries or dynamism are required.
   is a dynamically-typed language that performs type inference as an optimization, whereas
   Codon type checks the entire program ahead of time. Codon also tries to circumvent the learning
   curve of a new language by adopting Python's syntax and semantics.
+
+- **Mojo?** Mojo strives to add low-level programming support/features to the Python language,
+  while also supporting the rest of Python by relying on CPython. By contrast, Codon aims to
+  make Python itself more performant by using new type checking and compilation techniques,
+  without trying to be a superset or drop-in replacement. Codon tries to minimize new syntax
+  and language features with respect to Python.
 
 You can see results from [Codon's benchmark suite](https://github.com/exaloop/codon/tree/develop/bench)
 suite at [exaloop.io/benchmarks](https://exaloop.io/benchmarks).
@@ -56,6 +81,9 @@ You can use Codon on a per-function basis via the [`@codon.jit` decorator](../in
 which can be used within Python codebases. This will compile only the annotated functions
 and automatically handle data conversions to and from Codon. It also allows for
 the use of any Codon-specific modules or extensions, such as multithreading.
+
+Codon can also [compile to Python extension modules](../interop/pyext.md) that can be
+imported and used from Python.
 
 ## What about interoperability with other languages and frameworks?
 

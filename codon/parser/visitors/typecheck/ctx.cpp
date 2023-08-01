@@ -198,7 +198,7 @@ int TypeContext::reorderNamedArgs(types::FuncType *func,
   // 0. Find *args and **kwargs
   // True if there is a trailing ellipsis (full partial: fn(all_args, ...))
   bool partial = !args.empty() && args.back().value->getEllipsis() &&
-                 !args.back().value->getEllipsis()->isPipeArg &&
+                 args.back().value->getEllipsis()->mode != EllipsisExpr::PIPE &&
                  args.back().name.empty();
 
   int starArgIndex = -1, kwstarArgIndex = -1;
@@ -286,7 +286,8 @@ int TypeContext::reorderNamedArgs(types::FuncType *func,
                        Emsg(Error::CALL_ARGS_MISSING, cache->rev(func->ast->name),
                             cache->reverseIdentifierLookup[func->ast->args[i].name]));
     }
-  return score + onDone(starArgIndex, kwstarArgIndex, slots, partial);
+  auto s = onDone(starArgIndex, kwstarArgIndex, slots, partial);
+  return s != -1 ? score + s : -1;
 }
 
 void TypeContext::dump(int pad) {

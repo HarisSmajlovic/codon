@@ -95,6 +95,11 @@ public:
   /// @return true if the type is atomic
   bool isAtomic() const { return getActual()->doIsAtomic(); }
 
+  /// Checks if the contents (i.e. within an allocated block of memory)
+  /// of a type are atomic. Currently only meaningful for reference types.
+  /// @return true if the type's content is atomic
+  bool isContentAtomic() const { return getActual()->doIsContentAtomic(); }
+
   /// @return the ast type
   ast::types::TypePtr getAstType() const { return getActual()->astType; }
   /// Sets the ast type. Should not generally be used.
@@ -121,6 +126,7 @@ private:
 
   virtual std::vector<Type *> doGetUsedTypes() const { return {}; }
   virtual bool doIsAtomic() const = 0;
+  virtual bool doIsContentAtomic() const { return true; }
 
   virtual Value *doConstruct(std::vector<Value *> args);
 };
@@ -292,6 +298,8 @@ class RefType : public AcceptorExtend<RefType, MemberedType> {
 private:
   /// the internal contents of the type
   Type *contents;
+  /// true if type is polymorphic and needs RTTI
+  bool polymorphic;
 
 public:
   static const char NodeId;
@@ -299,8 +307,15 @@ public:
   /// Constructs a reference type.
   /// @param name the type's name
   /// @param contents the type's contents
-  RefType(std::string name, RecordType *contents)
-      : AcceptorExtend(std::move(name)), contents(contents) {}
+  /// @param polymorphic true if type is polymorphic
+  RefType(std::string name, RecordType *contents, bool polymorphic = false)
+      : AcceptorExtend(std::move(name)), contents(contents), polymorphic(polymorphic) {}
+
+  /// @return true if the type is polymorphic and needs RTTI
+  bool isPolymorphic() const { return polymorphic; }
+  /// Sets whether the type is polymorphic. Should not generally be used.
+  /// @param p true if polymorphic
+  void setPolymorphic(bool p = true) { polymorphic = p; }
 
   Type *getMemberType(const std::string &n) const override {
     return getContents()->getMemberType(n);
@@ -328,6 +343,8 @@ private:
   std::vector<Type *> doGetUsedTypes() const override { return {contents}; }
 
   bool doIsAtomic() const override { return false; }
+
+  bool doIsContentAtomic() const override;
 
   Value *doConstruct(std::vector<Value *> args) override;
 };

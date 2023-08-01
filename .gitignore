@@ -16,6 +16,7 @@
 *.pyc
 build/
 build_*/
+build-*/
 install/
 install_*/
 extra/python/src/jit.cpp
@@ -55,14 +56,17 @@ Thumbs.db
 .idea
 .mypy_cache
 .vscode
-
-extra/jupyter/share/jupyter/kernels/codon/kernel.json
-extra/python/codon/version.py
-scratch*.*
-_*
+.cache
 .ipynb_checkpoints
+
+# CMake generated files #
+#########################
+jupyter/share/jupyter/kernels/codon/kernel.json
+jit/codon/version.py
 
 # Testing files #
 #################
 temp/
 playground/
+scratch*.*
+_*

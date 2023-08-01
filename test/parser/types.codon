@@ -1626,6 +1626,35 @@ B[Ho]()
 #: init B Ho
 
 
+class Vehicle:
+    def drive(self):
+        return "I'm driving a vehicle"
+
+class Car(Vehicle):
+    def drive(self):
+        return "I'm driving a car"
+
+class Truck(Vehicle):
+    def drive(self):
+        return "I'm driving a truck"
+
+class SUV(Car, Truck):
+    def drive(self):
+        return "I'm driving an SUV"
+
+suv = SUV()
+def moo(s):
+    print(s.drive())
+moo(suv)
+moo(Truck())
+moo(Car())
+moo(Vehicle())
+#: I'm driving an SUV
+#: I'm driving a truck
+#: I'm driving a car
+#: I'm driving a vehicle
+
+
 #%% polymorphism_error_1,barebones
 class M[T]:
     m: T
@@ -1855,6 +1884,66 @@ a.test(1)
 a.test2(2)
 #: test:B 1
 #: test2:B 2
+
+
+
+class AX(object):
+    value: u64
+
+    def __init__(self):
+        print('init/AX')
+        self.value = 15u64
+
+    def get_value(self) -> u64:
+        return self.value
+
+class BX(object):
+    a: AX
+    def __init__(self):
+        print('init/BX')
+        self.a = AX()
+    def hai(self):
+        return f"hai/BX: {self.a.value}"
+
+class CX(BX):
+    def __init__(self):
+        print('init/CX')
+        super().__init__()
+
+    def getsuper(self):
+        return super()
+
+    def test(self):
+        print('test/CX:', self.a.value)
+        return self.a.get_value()
+
+    def hai(self):
+        return f"hai/CX: {self.a.value}"
+
+table = CX()
+#: init/CX
+#: init/BX
+#: init/AX
+print table.test()
+#: test/CX: 15
+#: 15
+
+s = table.getsuper()
+print(s.hai())
+#: hai/BX: 15
+s.a.value += 1u64
+print(s.hai())
+#: hai/BX: 16
+table.a.value += 1u64
+print(s.hai())
+#: hai/BX: 17
+table.test()
+#: test/CX: 17
+
+c: List[BX] = [s, table]
+print(c[0].hai())  #: hai/BX: 17
+print(c[1].hai())  #: hai/CX: 17
+
 
 
 #%% no_generic,barebones

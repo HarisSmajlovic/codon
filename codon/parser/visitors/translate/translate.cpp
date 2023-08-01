@@ -171,13 +171,15 @@ void TranslateVisitor::visit(StringExpr *expr) {
 void TranslateVisitor::visit(IdExpr *expr) {
   auto val = ctx->find(expr->value);
   seqassert(val, "cannot find '{}'", expr->value);
-  if (expr->value == "__vtable_size__")
+  if (expr->value == "__vtable_size__") {
+    // LOG("[] __vtable_size__={}", ctx->cache->classRealizationCnt + 2);
     result = make<ir::IntConst>(expr, ctx->cache->classRealizationCnt + 2,
                                 getType(expr->getType()));
-  else if (auto *v = val->getVar())
+  } else if (auto *v = val->getVar()) {
     result = make<ir::VarValue>(expr, v);
-  else if (auto *f = val->getFunc())
+  } else if (auto *f = val->getFunc()) {
     result = make<ir::VarValue>(expr, f);
+  }
 }
 
 void TranslateVisitor::visit(IfExpr *expr) {
@@ -234,14 +236,18 @@ void TranslateVisitor::visit(CallExpr *expr) {
 }
 
 void TranslateVisitor::visit(DotExpr *expr) {
-  if (expr->member == "__atomic__" || expr->member == "__elemsize__") {
+  if (expr->member == "__atomic__" || expr->member == "__elemsize__" ||
+      expr->member == "__contents_atomic__") {
     seqassert(expr->expr->getId(), "expected IdExpr, got {}", expr->expr);
     auto type = ctx->find(expr->expr->getId()->value)->getType();
     seqassert(type, "{} is not a type", expr->expr->getId()->value);
     result = make<ir::TypePropertyInstr>(
         expr, type,
-        expr->member == "__atomic__" ? ir::TypePropertyInstr::Property::IS_ATOMIC
-                                     : ir::TypePropertyInstr::Property::SIZEOF);
+        expr->member == "__atomic__"
+            ? ir::TypePropertyInstr::Property::IS_ATOMIC
+            : (expr->member == "__contents_atomic__"
+                   ? ir::TypePropertyInstr::Property::IS_CONTENT_ATOMIC
+                   : ir::TypePropertyInstr::Property::SIZEOF));
   } else {
     result = make<ir::ExtractInstr>(expr, transform(expr->expr), expr->member);
   }
@@ -278,6 +284,7 @@ void TranslateVisitor::visit(PipeExpr *expr) {
       simplePipeline &= !isGen(fn);
 
     std::vector<ir::Value *> args;
+    args.reserve(call->args.size());
     for (auto &a : call->args)
       args.emplace_back(a.value->getEllipsis() ? nullptr : transform(a.value));
     stages.emplace_back(fn, args, isGen(fn), false);
@@ -365,6 +372,10 @@ void TranslateVisitor::visit(AssignStmt *stmt) {
   if (!stmt->rhs || (!stmt->rhs->isType() && stmt->rhs->type)) {
     auto isGlobal = in(ctx->cache->globals, var);
     ir::Var *v = nullptr;
+
+    // dead declaration due to static compilation
+    if (!stmt->rhs && !stmt->type && !stmt->lhs->type->getClass())
+      return;
 
     if (isGlobal) {
       seqassert(ctx->find(var) && ctx->find(var)->getVar(), "cannot find global '{}'",
@@ -632,7 +643,7 @@ void TranslateVisitor::transformLLVMFunction(types::FuncType *type, FunctionStmt
     ltrim(lp);
     rtrim(lp);
     // Extract declares and constants.
-    if (isDeclare && !startswith(lp, "declare ")) {
+    if (isDeclare && !startswith(lp, "declare ") && !startswith(lp, "@")) {
       bool isConst = lp.find("private constant") != std::string::npos;
       if (!isConst) {
         isDeclare = false;
