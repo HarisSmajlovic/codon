@@ -240,7 +240,7 @@ void Cache::populatePythonModule() {
   if (!pythonExt)
     return;
 
-  LOG("[py] ====== module generation =======");
+  LOG_USER("[py] ====== module generation =======");
 
 #define N std::make_shared
 
@@ -273,7 +273,7 @@ void Cache::populatePythonModule() {
       if (!in(c.methods, "__to_py__") || !in(c.methods, "__from_py__"))
         continue;
 
-      LOG("[py] Cythonizing {}", cn);
+      LOG_USER("[py] Cythonizing {}", cn);
       ir::PyType py{rev(cn), c.ast->getDocstr()};
 
       auto tc = typeCtx->forceFind(cn)->type;
@@ -329,20 +329,29 @@ void Cache::populatePythonModule() {
           continue;
         auto fna = functions[canonicalName].ast;
         bool isMethod = fna->hasAttr(Attr::Method);
+        bool isProperty = fna->hasAttr(Attr::Property);
+
         std::string call = pyWrap + ".wrap_multiple";
         bool isMagic = false;
         if (startswith(n, "__") && endswith(n, "__")) {
-          if (auto i = in(classes[pyWrap].methods,
-                          "wrap_magic_" + n.substr(2, n.size() - 4))) {
+          auto m = n.substr(2, n.size() - 4);
+          if (m == "new" && c.ast->hasAttr(Attr::Tuple))
+            m = "init";
+          if (auto i = in(classes[pyWrap].methods, "wrap_magic_" + m)) {
             call = *i;
             isMagic = true;
           }
         }
+        if (isProperty)
+          call = pyWrap + ".wrap_get";
 
         auto fnName = call + ":0";
         seqassertn(in(functions, fnName), "bad name");
         auto generics = std::vector<types::TypePtr>{tc};
-        if (!isMagic) {
+        if (isProperty) {
+          generics.push_back(
+              std::make_shared<types::StaticType>(this, rev(canonicalName)));
+        } else if (!isMagic) {
           generics.push_back(std::make_shared<types::StaticType>(this, n));
           generics.push_back(std::make_shared<types::StaticType>(this, (int)isMethod));
         }
@@ -350,8 +359,10 @@ void Cache::populatePythonModule() {
         if (!f)
           continue;
 
-        LOG("[py] {} -> {}", n, call);
-        if (n == "__repr__") {
+        LOG_USER("[py] {} -> {} ({}; {})", n, call, isMethod, isProperty);
+        if (isProperty) {
+          py.getset.push_back({rev(canonicalName), "", f, nullptr});
+        } else if (n == "__repr__") {
           py.repr = f;
         } else if (n == "__add__") {
           py.add = f;
@@ -441,7 +452,7 @@ void Cache::populatePythonModule() {
           py.iter = f;
         } else if (n == "__del__") {
           py.del = f;
-        } else if (n == "__init__") {
+        } else if (n == "__init__" || (c.ast->hasAttr(Attr::Tuple) && n == "__new__")) {
           py.init = f;
         } else {
           py.methods.push_back(ir::PyFunction{
@@ -474,9 +485,11 @@ void Cache::populatePythonModule() {
         auto generics = std::vector<types::TypePtr>{
             tc, std::make_shared<types::StaticType>(this, mn)};
         auto gf = realizeIR(functions[pyWrap + ".wrap_get:0"].type, generics);
-        auto sf = realizeIR(functions[pyWrap + ".wrap_set:0"].type, generics);
+        ir::Func *sf = nullptr;
+        if (!c.ast->hasAttr(Attr::Tuple))
+          sf = realizeIR(functions[pyWrap + ".wrap_set:0"].type, generics);
         py.getset.push_back({mn, "", gf, sf});
-        LOG("[py] {}: {} . {}", "member", cn, mn);
+        LOG_USER("[py] {}: {} . {}", "member", cn, mn);
       }
       pyModule->types.push_back(py);
     }
@@ -485,7 +498,7 @@ void Cache::populatePythonModule() {
   // Handle __iternext__ wrappers
   auto cin = "_PyWrap.IterWrap";
   for (auto &[cn, cr] : classes[cin].realizations) {
-    LOG("[py] iterfn: {}", cn);
+    LOG_USER("[py] iterfn: {}", cn);
     ir::PyType py{cn, ""};
     auto tc = cr->type;
     for (auto &[rn, r] : functions[pyWrap + ".py_type:0"].realizations) {
@@ -515,18 +528,19 @@ void Cache::populatePythonModule() {
 
   for (const auto &[fn, f] : functions)
     if (f.isToplevel) {
-      std::string call = pyWrap + ".wrap_single";
-      if (f.ast->args.size() > 1)
-        call = pyWrap + ".wrap_multiple";
+      std::string call = pyWrap + ".wrap_multiple";
       auto fnName = call + ":0";
       seqassertn(in(functions, fnName), "bad name");
       auto generics = std::vector<types::TypePtr>{
           typeCtx->forceFind(".toplevel")->type,
-          std::make_shared<types::StaticType>(this, rev(f.ast->name))};
+          std::make_shared<types::StaticType>(this, rev(f.ast->name)),
+          std::make_shared<types::StaticType>(this, 0)};
       if (auto ir = realizeIR(functions[fnName].type, generics)) {
+        LOG_USER("[py] {}: {}", "toplevel", fn);
         pyModule->functions.push_back(ir::PyFunction{rev(fn), f.ast->getDocstr(), ir,
                                                      ir::PyFunction::Type::TOPLEVEL,
                                                      int(f.ast->args.size())});
+        pyModule->functions.back().keywords = true;
       }
     }
 

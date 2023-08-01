@@ -281,8 +281,10 @@ ExprPtr TypecheckVisitor::callReorderArguments(FuncTypePtr calleeFn, CallExpr *e
   };
 
   // Handle reordered arguments (see @c reorderNamedArgs for details)
+  bool partial = false;
   auto reorderFn = [&](int starArgIndex, int kwstarArgIndex,
-                       const std::vector<std::vector<int>> &slots, bool partial) {
+                       const std::vector<std::vector<int>> &slots, bool _partial) {
+    partial = _partial;
     ctx->addBlock(); // add function generics to typecheck default arguments
     addFunctionGenerics(calleeFn->getFunc().get());
     for (size_t si = 0, pi = 0; si < slots.size(); si++) {
@@ -410,18 +412,27 @@ ExprPtr TypecheckVisitor::callReorderArguments(FuncTypePtr calleeFn, CallExpr *e
                 (!expr->hasAttr(ExprAttr::OrderedCall) &&
                  typeArgs.size() == calleeFn->funcGenerics.size()),
             "bad vector sizes");
-  for (size_t si = 0;
-       !expr->hasAttr(ExprAttr::OrderedCall) && si < calleeFn->funcGenerics.size();
-       si++) {
-    if (typeArgs[si]) {
-      auto typ = typeArgs[si]->type;
-      if (calleeFn->funcGenerics[si].type->isStaticType()) {
-        if (!typeArgs[si]->isStatic()) {
-          E(Error::EXPECTED_STATIC, typeArgs[si]);
+  if (!calleeFn->funcGenerics.empty()) {
+    auto niGenerics = calleeFn->ast->getNonInferrableGenerics();
+    for (size_t si = 0;
+         !expr->hasAttr(ExprAttr::OrderedCall) && si < calleeFn->funcGenerics.size();
+         si++) {
+      if (typeArgs[si]) {
+        auto typ = typeArgs[si]->type;
+        if (calleeFn->funcGenerics[si].type->isStaticType()) {
+          if (!typeArgs[si]->isStatic()) {
+            E(Error::EXPECTED_STATIC, typeArgs[si]);
+          }
+          typ = Type::makeStatic(ctx->cache, typeArgs[si]);
         }
-        typ = Type::makeStatic(ctx->cache, typeArgs[si]);
+        unify(typ, calleeFn->funcGenerics[si].type);
+      } else {
+        if (calleeFn->funcGenerics[si].type->getUnbound() &&
+            !calleeFn->ast->args[si].defaultValue && !partial &&
+            in(niGenerics, calleeFn->funcGenerics[si].name)) {
+          error("generic '{}' not provided", calleeFn->funcGenerics[si].niceName);
+        }
       }
-      unify(typ, calleeFn->funcGenerics[si].type);
     }
   }
 
@@ -495,7 +506,10 @@ bool TypecheckVisitor::typecheckCallArgs(const FuncTypePtr &calleeFn,
     if (calleeFn->ast->args[i].status == Param::Generic) {
       if (calleeFn->ast->args[i].defaultValue &&
           calleeFn->funcGenerics[j].type->getUnbound()) {
+        ctx->addBlock(); // add function generics to typecheck default arguments
+        addFunctionGenerics(calleeFn->getFunc().get());
         auto def = transform(clone(calleeFn->ast->args[i].defaultValue));
+        ctx->popBlock();
         unify(calleeFn->funcGenerics[j].type,
               def->isStatic() ? Type::makeStatic(ctx->cache, def) : def->getType());
       }
@@ -553,12 +567,10 @@ std::pair<bool, ExprPtr> TypecheckVisitor::transformSpecialCall(CallExpr *expr) 
     return {true, transformTupleFn(expr)};
   } else if (val == "__realized__") {
     return {true, transformRealizedFn(expr)};
-  } else if (val == "__static_print__") {
+  } else if (val == "std.internal.static.static_print") {
     return {false, transformStaticPrintFn(expr)};
-  } else if (auto e = transformInternalStaticFn(expr)) {
-    return {true, e};
   } else {
-    return {false, nullptr};
+    return transformInternalStaticFn(expr);
   }
 }
 
@@ -774,7 +786,7 @@ ExprPtr TypecheckVisitor::transformStaticLen(CallExpr *expr) {
 }
 
 /// Transform hasattr method to a static boolean expression.
-/// This method also supports supports additional argument types that are used to check
+/// This method also supports additional argument types that are used to check
 /// for a matching overload (not available in Python).
 ExprPtr TypecheckVisitor::transformHasAttr(CallExpr *expr) {
   expr->staticValue.type = StaticValue::INT;
@@ -904,20 +916,21 @@ ExprPtr TypecheckVisitor::transformStaticPrintFn(CallExpr *expr) {
   auto &args = expr->args[0].value->getCall()->args;
   for (size_t i = 0; i < args.size(); i++) {
     realize(args[i].value->type);
-    fmt::print(stderr, "[static_print] {}: {} := {}\n", getSrcInfo(),
+    fmt::print(stderr, "[static_print] {}: {} := {}{}\n", getSrcInfo(),
                FormatVisitor::apply(args[i].value),
-               args[i].value->type ? args[i].value->type->debugString(1) : "-");
+               args[i].value->type ? args[i].value->type->debugString(1) : "-",
+               args[i].value->isStatic() ? " [static]" : "");
   }
   return nullptr;
 }
 
 // Transform internal.static calls
-ExprPtr TypecheckVisitor::transformInternalStaticFn(CallExpr *expr) {
+std::pair<bool, ExprPtr> TypecheckVisitor::transformInternalStaticFn(CallExpr *expr) {
   if (expr->expr->isId("std.internal.static.fn_can_call")) {
     expr->staticValue.type = StaticValue::INT;
     auto typ = expr->args[0].value->getType()->getClass();
     if (!typ)
-      return nullptr;
+      return {true, nullptr};
 
     auto fn = expr->args[0].value->type->getFunc();
     if (!fn)
@@ -936,19 +949,19 @@ ExprPtr TypecheckVisitor::transformInternalStaticFn(CallExpr *expr) {
       callArgs.push_back({a.first, std::make_shared<NoneExpr>()}); // dummy expression
       callArgs.back().value->setType(a.second);
     }
-    return transform(N<BoolExpr>(canCall(fn, callArgs) >= 0));
+    return {true, transform(N<BoolExpr>(canCall(fn, callArgs) >= 0))};
   } else if (expr->expr->isId("std.internal.static.fn_arg_has_type")) {
     expr->staticValue.type = StaticValue::INT;
-    auto fn = expr->args[0].value->type->getFunc();
+    auto fn = ctx->extractFunction(expr->args[0].value->type);
     if (!fn)
       error("expected a function, got '{}'", expr->args[0].value->type->prettyString());
     auto idx = ctx->getStaticInt(expr->expr->type->getFunc()->funcGenerics[0].type);
     seqassert(idx, "expected a static integer");
     auto &args = fn->getArgTypes();
-    return transform(
-        N<BoolExpr>(*idx >= 0 && *idx < args.size() && args[*idx]->canRealize()));
+    return {true, transform(N<BoolExpr>(*idx >= 0 && *idx < args.size() &&
+                                        args[*idx]->canRealize()))};
   } else if (expr->expr->isId("std.internal.static.fn_arg_get_type")) {
-    auto fn = expr->args[0].value->type->getFunc();
+    auto fn = ctx->extractFunction(expr->args[0].value->type);
     if (!fn)
       error("expected a function, got '{}'", expr->args[0].value->type->prettyString());
     auto idx = ctx->getStaticInt(expr->expr->type->getFunc()->funcGenerics[0].type);
@@ -956,9 +969,9 @@ ExprPtr TypecheckVisitor::transformInternalStaticFn(CallExpr *expr) {
     auto &args = fn->getArgTypes();
     if (*idx < 0 || *idx >= args.size() || !args[*idx]->canRealize())
       error("argument does not have type");
-    return transform(NT<IdExpr>(args[*idx]->realizedName()));
+    return {true, transform(NT<IdExpr>(args[*idx]->realizedName()))};
   } else if (expr->expr->isId("std.internal.static.fn_args")) {
-    auto fn = expr->args[0].value->type->getFunc();
+    auto fn = ctx->extractFunction(expr->args[0].value->type);
     if (!fn)
       error("expected a function, got '{}'", expr->args[0].value->type->prettyString());
     std::vector<ExprPtr> v;
@@ -968,10 +981,10 @@ ExprPtr TypecheckVisitor::transformInternalStaticFn(CallExpr *expr) {
       n = ctx->cache->rev(n);
       v.push_back(N<StringExpr>(n));
     }
-    return transform(N<TupleExpr>(v));
+    return {true, transform(N<TupleExpr>(v))};
   } else if (expr->expr->isId("std.internal.static.fn_has_default")) {
     expr->staticValue.type = StaticValue::INT;
-    auto fn = expr->args[0].value->type->getFunc();
+    auto fn = ctx->extractFunction(expr->args[0].value->type);
     if (!fn)
       error("expected a function, got '{}'", expr->args[0].value->type->prettyString());
     auto idx = ctx->getStaticInt(expr->expr->type->getFunc()->funcGenerics[0].type);
@@ -979,9 +992,9 @@ ExprPtr TypecheckVisitor::transformInternalStaticFn(CallExpr *expr) {
     auto &args = fn->ast->args;
     if (*idx < 0 || *idx >= args.size())
       error("argument out of bounds");
-    return transform(N<IntExpr>(args[*idx].defaultValue != nullptr));
+    return {true, transform(N<IntExpr>(args[*idx].defaultValue != nullptr))};
   } else if (expr->expr->isId("std.internal.static.fn_get_default")) {
-    auto fn = expr->args[0].value->type->getFunc();
+    auto fn = ctx->extractFunction(expr->args[0].value->type);
     if (!fn)
       error("expected a function, got '{}'", expr->args[0].value->type->prettyString());
     auto idx = ctx->getStaticInt(expr->expr->type->getFunc()->funcGenerics[0].type);
@@ -989,9 +1002,39 @@ ExprPtr TypecheckVisitor::transformInternalStaticFn(CallExpr *expr) {
     auto &args = fn->ast->args;
     if (*idx < 0 || *idx >= args.size())
       error("argument out of bounds");
-    return transform(args[*idx].defaultValue);
+    return {true, transform(args[*idx].defaultValue)};
+  } else if (expr->expr->isId("std.internal.static.fn_wrap_call_args")) {
+    auto typ = expr->args[0].value->getType()->getClass();
+    if (!typ)
+      return {true, nullptr};
+
+    auto fn = ctx->extractFunction(expr->args[0].value->type);
+    if (!fn)
+      error("expected a function, got '{}'", expr->args[0].value->type->prettyString());
+
+    std::vector<CallExpr::Arg> callArgs;
+    if (auto tup = expr->args[1].value->origExpr->getTuple()) {
+      for (auto &a : tup->items) {
+        callArgs.push_back({"", a});
+      }
+    }
+    if (auto kw = expr->args[1].value->origExpr->getCall()) {
+      auto kwCls = in(ctx->cache->classes, expr->getType()->getClass()->name);
+      seqassert(kwCls, "cannot find {}", expr->getType()->getClass()->name);
+      for (size_t i = 0; i < kw->args.size(); i++) {
+        callArgs.push_back({kwCls->fields[i].name, kw->args[i].value});
+      }
+    }
+    auto zzz = transform(N<CallExpr>(N<IdExpr>(fn->ast->name), callArgs));
+    if (!zzz->isDone())
+      return {true, nullptr};
+
+    std::vector<ExprPtr> tupArgs;
+    for (auto &a : zzz->getCall()->args)
+      tupArgs.push_back(a.value);
+    return {true, transform(N<TupleExpr>(tupArgs))};
   } else {
-    return nullptr;
+    return {false, nullptr};
   }
 }
 

@@ -533,7 +533,7 @@ void LLVMVisitor::writeToExecutable(const std::string &filename,
 
         command.push_back("-l" + stem.str());
       } else {
-        for (auto &l: plugin->info.linkArgs)
+        for (auto &l : plugin->info.linkArgs)
           command.push_back(l);
       }
     }
@@ -916,13 +916,19 @@ void LLVMVisitor::writeToPythonExtension(const PyModule &pymod,
         pyFunc(pytype.len),      // sq_length
         null,                    // sq_concat
         null,                    // sq_repeat
-        pyFunc(pytype.getitem),  // sq_item
+        null,                    // sq_item
         null,                    // was_sq_slice
-        pyFunc(pytype.setitem),  // sq_ass_item
+        null,                    // sq_ass_item
         null,                    // was_sq_ass_slice
         pyFunc(pytype.contains), // sq_contains
         null,                    // sq_inplace_concat
         null,                    // sq_inplace_repeat
+    };
+
+    std::vector<llvm::Constant *> mappingSlots = {
+        null,                   // mp_length
+        pyFunc(pytype.getitem), // mp_subscript
+        pyFunc(pytype.setitem), // mp_ass_subscript
     };
 
     bool needNumberSlots =
@@ -931,14 +937,40 @@ void LLVMVisitor::writeToPythonExtension(const PyModule &pymod,
     bool needSequenceSlots =
         std::find_if(sequenceSlots.begin(), sequenceSlots.end(),
                      [&](auto *v) { return v != null; }) != sequenceSlots.end();
+    bool needMappingSlots =
+        std::find_if(mappingSlots.begin(), mappingSlots.end(),
+                     [&](auto *v) { return v != null; }) != mappingSlots.end();
 
-    auto *numberSlotsConst =
-        needNumberSlots ? llvm::ConstantStruct::get(pyNumberMethodsType, numberSlots)
-                        : null;
-    auto *sequenceSlotsConst =
-        needSequenceSlots
-            ? llvm::ConstantStruct::get(pySequenceMethodsType, sequenceSlots)
-            : null;
+    llvm::Constant *numberSlotsConst = null;
+    llvm::Constant *sequenceSlotsConst = null;
+    llvm::Constant *mappingSlotsConst = null;
+
+    if (needNumberSlots) {
+      auto *pyNumberSlotsVar = new llvm::GlobalVariable(
+          *M, pyNumberMethodsType,
+          /*isConstant=*/false, llvm::GlobalValue::PrivateLinkage,
+          llvm::ConstantStruct::get(pyNumberMethodsType, numberSlots),
+          ".pyext_number_slots." + pytype.name);
+      numberSlotsConst = pyNumberSlotsVar;
+    }
+
+    if (needSequenceSlots) {
+      auto *pySequenceSlotsVar = new llvm::GlobalVariable(
+          *M, pySequenceMethodsType,
+          /*isConstant=*/false, llvm::GlobalValue::PrivateLinkage,
+          llvm::ConstantStruct::get(pySequenceMethodsType, sequenceSlots),
+          ".pyext_sequence_slots." + pytype.name);
+      sequenceSlotsConst = pySequenceSlotsVar;
+    }
+
+    if (needMappingSlots) {
+      auto *pyMappingSlotsVar = new llvm::GlobalVariable(
+          *M, pyMappingMethodsType,
+          /*isConstant=*/false, llvm::GlobalValue::PrivateLinkage,
+          llvm::ConstantStruct::get(pyMappingMethodsType, mappingSlots),
+          ".pyext_mapping_slots." + pytype.name);
+      mappingSlotsConst = pyMappingSlotsVar;
+    }
 
     auto *refType = cast<types::RefType>(pytype.type);
     auto *llvmType = getLLVMType(pytype.type);
@@ -951,20 +983,36 @@ void LLVMVisitor::writeToPythonExtension(const PyModule &pymod,
 
     auto *alloc = llvm::cast<llvm::Function>(
         M->getOrInsertFunction(pytype.name + ".py_alloc", ptr, ptr, i64).getCallee());
-    auto *entry = llvm::BasicBlock::Create(*context, "entry", alloc);
-    B->SetInsertPoint(entry);
-    auto *pythonObject = B->CreateCall(allocUncollectable, B->getInt64(pySize));
-    auto *header = B->CreateInsertValue(
-        llvm::ConstantStruct::get(pyObjectType, B->getInt64(1), null),
-        alloc->arg_begin(), 1);
-    B->CreateStore(header, pythonObject);
-    if (refType) {
-      auto *codonObject = B->CreateCall(
-          makeAllocFunc(refType->getContents()->isAtomic()), B->getInt64(codonSize));
-      B->CreateStore(codonObject,
-                     B->CreateGEP(objectType, pythonObject, {zero64, B->getInt32(1)}));
+    {
+      auto *entry = llvm::BasicBlock::Create(*context, "entry", alloc);
+      B->SetInsertPoint(entry);
+      auto *pythonObject = B->CreateCall(allocUncollectable, B->getInt64(pySize));
+      auto *header = B->CreateInsertValue(
+          llvm::ConstantStruct::get(pyObjectType, B->getInt64(1), null),
+          alloc->arg_begin(), 1);
+      B->CreateStore(header, pythonObject);
+      if (refType) {
+        auto *codonObject = B->CreateCall(
+            makeAllocFunc(refType->getContents()->isAtomic()), B->getInt64(codonSize));
+        B->CreateStore(codonObject, B->CreateGEP(objectType, pythonObject,
+                                                 {zero64, B->getInt32(1)}));
+      }
+      B->CreateRet(pythonObject);
     }
-    B->CreateRet(pythonObject);
+
+    auto *delFn = pyFuncWrap(pytype.del, /*wrap=*/false);
+    auto *dealloc = llvm::cast<llvm::Function>(
+        M->getOrInsertFunction(pytype.name + ".py_dealloc", B->getVoidTy(), ptr)
+            .getCallee());
+    {
+      llvm::Value *obj = dealloc->arg_begin();
+      auto *entry = llvm::BasicBlock::Create(*context, "entry", dealloc);
+      B->SetInsertPoint(entry);
+      if (delFn != null)
+        B->CreateCall(llvm::FunctionCallee(dealloc->getFunctionType(), delFn), obj);
+      B->CreateCall(free, obj);
+      B->CreateRetVoid();
+    }
 
     auto *pyNew = llvm::cast<llvm::Function>(
         M->getOrInsertFunction("PyType_GenericNew", ptr, ptr, ptr, ptr).getCallee());
@@ -977,7 +1025,7 @@ void LLVMVisitor::writeToPythonExtension(const PyModule &pymod,
         pyString(pymod.name + "." + pytype.name), // tp_name
         B->getInt64(pySize),                      // tp_basicsize
         zero64,                                   // tp_itemsize
-        free,                                     // tp_dealloc
+        dealloc,                                  // tp_dealloc
         zero64,                                   // tp_vectorcall_offset
         null,                                     // tp_getattr
         null,                                     // tp_setattr
@@ -985,7 +1033,7 @@ void LLVMVisitor::writeToPythonExtension(const PyModule &pymod,
         pyFunc(pytype.repr),                      // tp_repr
         numberSlotsConst,                         // tp_as_number
         sequenceSlotsConst,                       // tp_as_sequence
-        null,                                     // tp_as_mapping
+        mappingSlotsConst,                        // tp_as_mapping
         pyFunc(pytype.hash),                      // tp_hash
         pyFunc(pytype.call),                      // tp_call
         pyFunc(pytype.str),                       // tp_str
@@ -1020,7 +1068,7 @@ void LLVMVisitor::writeToPythonExtension(const PyModule &pymod,
         null,                                     // tp_weaklist
         null,                                     // tp_del
         zero32,                                   // tp_version_tag
-        pyFunc(pytype.del),                       // tp_finalize
+        free,                                     // tp_finalize
         null,                                     // tp_vectorcall
         B->getInt8(0),                            // tp_watched
     };
@@ -1300,6 +1348,7 @@ llvm::GlobalVariable *LLVMVisitor::getTypeIdxVar(const std::string &name) {
     tidx = new llvm::GlobalVariable(
         *M, typeInfoType, /*isConstant=*/true, llvm::GlobalValue::PrivateLinkage,
         llvm::ConstantStruct::get(typeInfoType, B->getInt32(idx)), typeVarName);
+    tidx->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
   }
   return tidx;
 }

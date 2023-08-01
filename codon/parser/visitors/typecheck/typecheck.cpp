@@ -65,6 +65,7 @@ ExprPtr TypecheckVisitor::transform(ExprPtr &expr) {
       ctx->changedNodes++;
   }
   realize(typ);
+  LOG_TYPECHECK("[expr] {}: {}{}", getSrcInfo(), expr, expr->isDone() ? "[done]" : "");
   return expr;
 }
 
@@ -119,6 +120,8 @@ StmtPtr TypecheckVisitor::transform(StmtPtr &stmt) {
   }
   if (stmt->done)
     ctx->changedNodes++;
+  // LOG_TYPECHECK("[stmt] {}: {}{}", getSrcInfo(), stmt, stmt->isDone() ? "[done]" :
+  // "");
   return stmt;
 }
 
@@ -214,20 +217,55 @@ types::FuncTypePtr TypecheckVisitor::findBestMethod(
   return m.empty() ? nullptr : m[0];
 }
 
+// Search expression tree for a identifier
+class IdSearchVisitor : public CallbackASTVisitor<bool, bool> {
+  std::string what;
+  bool result;
+
+public:
+  IdSearchVisitor(std::string what) : what(std::move(what)), result(false) {}
+  bool transform(const std::shared_ptr<Expr> &expr) override {
+    if (result)
+      return result;
+    IdSearchVisitor v(what);
+    if (expr)
+      expr->accept(v);
+    return v.result;
+  }
+  bool transform(const std::shared_ptr<Stmt> &stmt) override {
+    if (result)
+      return result;
+    IdSearchVisitor v(what);
+    if (stmt)
+      stmt->accept(v);
+    return v.result;
+  }
+  void visit(IdExpr *expr) override {
+    if (expr->value == what)
+      result = true;
+  }
+};
+
 /// Check if a function can be called with the given arguments.
 /// See @c reorderNamedArgs for details.
 int TypecheckVisitor::canCall(const types::FuncTypePtr &fn,
                               const std::vector<CallExpr::Arg> &args) {
   std::vector<std::pair<types::TypePtr, size_t>> reordered;
+  auto niGenerics = fn->ast->getNonInferrableGenerics();
   auto score = ctx->reorderNamedArgs(
       fn.get(), args,
       [&](int s, int k, const std::vector<std::vector<int>> &slots, bool _) {
         for (int si = 0; si < slots.size(); si++) {
           if (fn->ast->args[si].status == Param::Generic) {
-            if (slots[si].empty())
+            if (slots[si].empty()) {
+              // is this "real" type?
+              if (in(niGenerics, fn->ast->args[si].name) &&
+                  !fn->ast->args[si].defaultValue)
+                return -1;
               reordered.push_back({nullptr, 0});
-            else
+            } else {
               reordered.push_back({args[slots[si][0]].value->type, slots[si][0]});
+            }
           } else if (si == s || si == k || slots[si].size() != 1) {
             // Ignore *args, *kwargs and default arguments
             reordered.push_back({nullptr, 0});
@@ -314,16 +352,24 @@ bool TypecheckVisitor::wrapExpr(ExprPtr &expr, const TypePtr &expectedType,
                                 const FuncTypePtr &callee, bool allowUnwrap) {
   auto expectedClass = expectedType->getClass();
   auto exprClass = expr->getType()->getClass();
+  auto doArgWrap =
+      !callee || !callee->ast->hasAttr("std.internal.attributes.no_argument_wrap");
+  if (!doArgWrap)
+    return true;
+  auto doTypeWrap =
+      !callee || !callee->ast->hasAttr("std.internal.attributes.no_type_wrap");
   if (callee && expr->isType()) {
     auto c = expr->type->getClass();
     if (!c)
       return false;
-    if (c->getRecord())
-      expr = transform(N<CallExpr>(expr, N<EllipsisExpr>()));
-    else
-      expr = transform(N<CallExpr>(
-          N<IdExpr>("__internal__.class_ctr:0"),
-          std::vector<CallExpr::Arg>{{"T", expr}, {"", N<EllipsisExpr>()}}));
+    if (doTypeWrap) {
+      if (c->getRecord())
+        expr = transform(N<CallExpr>(expr, N<EllipsisExpr>()));
+      else
+        expr = transform(N<CallExpr>(
+            N<IdExpr>("__internal__.class_ctr:0"),
+            std::vector<CallExpr::Arg>{{"T", expr}, {"", N<EllipsisExpr>()}}));
+    }
   }
 
   std::unordered_set<std::string> hints = {"Generator", "float", TYPE_OPTIONAL,
