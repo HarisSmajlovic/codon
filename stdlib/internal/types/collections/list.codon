@@ -363,7 +363,7 @@ class List:
 
     def _idx_check(self, idx: int, msg: str):
         if idx >= self.len or idx < 0:
-            raise IndexError(msg)
+            raise IndexError(f"{msg}: idx {idx} not within [0, {self.len})")
 
     def _resize(self, new_cap: int):
         p = Ptr[T](gc.realloc(self.arr.ptr.as_byte(),
