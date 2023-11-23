@@ -15,7 +15,7 @@ CODON_BUILD_ARCHIVE=codon-$OS-$ARCH.tar.gz
 
 mkdir -p $CODON_INSTALL_DIR
 cd $CODON_INSTALL_DIR
-curl -L https://github.com/exaloop/codon/releases/latest/download/"$CODON_BUILD_ARCHIVE" | tar zxvf - --strip-components=1
+curl -L https://github.com/HarisSmajlovic/codon/releases/download/v0.16.3-sequre/"$CODON_BUILD_ARCHIVE" | tar zxvf - --strip-components=1
 
 EXPORT_COMMAND="export PATH=$(pwd)/bin:\$PATH"
 echo "PATH export command:"
