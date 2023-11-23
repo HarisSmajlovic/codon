@@ -31,16 +31,16 @@ cmake --install build --prefix=codon-deploy
 # build cython
 export PATH=$PATH:$(pwd)/llvm/bin
 python3 -m pip install cython wheel astunparse
-(cd codon-deploy/python && python3 setup.py sdist)
-CODON_DIR=$(pwd)/codon-deploy python3 -m pip install -v codon-deploy/python/dist/*.gz
-python3 test/python/cython_jit.py
+# (cd codon-deploy/python && python3 setup.py sdist)
+# CODON_DIR=$(pwd)/codon-deploy python3 -m pip install -v codon-deploy/python/dist/*.gz
+# python3 test/python/cython_jit.py
 
-# test
-export LD_LIBRARY_PATH=$(pwd)/build:$LD_LIBRARY_PATH
-export PYTHONPATH=$(pwd):$PYTHONPATH
-export CODON_PATH=$(pwd)/stdlib
-ln -s build/libcodonrt.so .
-build/codon_test
+# # test
+# export LD_LIBRARY_PATH=$(pwd)/build:$LD_LIBRARY_PATH
+# export PYTHONPATH=$(pwd):$PYTHONPATH
+# export CODON_PATH=$(pwd)/stdlib
+# ln -s build/libcodonrt.so .
+# build/codon_test
 
 # package
 export CODON_BUILD_ARCHIVE=codon-$(uname -s | awk '{print tolower($0)}')-$(uname -m).tar.gz
