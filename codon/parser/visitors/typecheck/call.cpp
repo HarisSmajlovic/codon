@@ -1,4 +1,4 @@
-// Copyright (C) 2022-2023 Exaloop Inc. <https://exaloop.io>
+// Copyright (C) 2022-2024 Exaloop Inc. <https://exaloop.io>
 
 #include <string>
 #include <tuple>
@@ -46,6 +46,21 @@ void TypecheckVisitor::visit(EllipsisExpr *expr) {
 /// See @c transformCallArgs , @c getCalleeFn , @c callReorderArguments ,
 ///     @c typecheckCallArgs , @c transformSpecialCall and @c wrapExpr for more details.
 void TypecheckVisitor::visit(CallExpr *expr) {
+  if (expr->expr->isId("__internal__.undef") && expr->args.size() == 2 &&
+      expr->args[0].value->getId()) {
+    auto val = expr->args[0].value->getId()->value;
+    val = val.substr(0, val.size() - 9);
+    if (auto changed = in(ctx->cache->replacements, val)) {
+      while (auto s = in(ctx->cache->replacements, val))
+        val = changed->first, changed = s;
+      if (!changed->second) {
+        // TODO: add no-op expr
+        resultExpr = transform(N<BoolExpr>(false));
+        return;
+      }
+    }
+  }
+
   // Transform and expand arguments. Return early if it cannot be done yet
   if (!transformCallArgs(expr->args))
     return;
@@ -319,7 +334,7 @@ ExprPtr TypecheckVisitor::callReorderArguments(FuncTypePtr calleeFn, CallExpr *e
         }
         ExprPtr e = N<TupleExpr>(extra);
         e->setAttr(ExprAttr::StarArgument);
-        if (!expr->expr->isId("hasattr:0"))
+        if (!expr->expr->isId("hasattr"))
           e = transform(e);
         if (partial) {
           part.args = e;
@@ -373,8 +388,16 @@ ExprPtr TypecheckVisitor::callReorderArguments(FuncTypePtr calleeFn, CallExpr *e
             E(Error::CALL_RECURSIVE_DEFAULT, expr,
               ctx->cache->rev(calleeFn->ast->args[si].name));
           ctx->defaultCallDepth.insert(es);
-          args.push_back(
-              {realName, transform(clone(calleeFn->ast->args[si].defaultValue))});
+
+          if (calleeFn->ast->args[si].defaultValue->getNone() &&
+              !calleeFn->ast->args[si].type) {
+            args.push_back(
+                {realName, transform(N<CallExpr>(N<InstantiateExpr>(
+                               N<IdExpr>("Optional"), N<IdExpr>("NoneType"))))});
+          } else {
+            args.push_back(
+                {realName, transform(clone(calleeFn->ast->args[si].defaultValue))});
+          }
           ctx->defaultCallDepth.erase(es);
         }
       } else {
@@ -562,7 +585,7 @@ std::pair<bool, ExprPtr> TypecheckVisitor::transformSpecialCall(CallExpr *expr) 
     return {true, transformIsInstance(expr)};
   } else if (val == "staticlen") {
     return {true, transformStaticLen(expr)};
-  } else if (startswith(val, "hasattr:")) {
+  } else if (val == "hasattr") {
     return {true, transformHasAttr(expr)};
   } else if (val == "getattr") {
     return {true, transformGetAttr(expr)};
@@ -738,6 +761,8 @@ ExprPtr TypecheckVisitor::transformIsInstance(CallExpr *expr) {
     return transform(N<BoolExpr>(typ->getRecord() != nullptr));
   } else if (typExpr->isId("ByRef")) {
     return transform(N<BoolExpr>(typ->getRecord() == nullptr));
+  } else if (typExpr->isId("Union")) {
+    return transform(N<BoolExpr>(typ->getUnion() != nullptr));
   } else if (!typExpr->type->getUnion() && typ->getUnion()) {
     auto unionTypes = typ->getUnion()->getRealizationTypes();
     int tag = -1;
@@ -810,38 +835,54 @@ ExprPtr TypecheckVisitor::transformHasAttr(CallExpr *expr) {
   auto typ = expr->args[0].value->getType()->getClass();
   if (!typ)
     return nullptr;
-
   auto member = expr->expr->type->getFunc()
                     ->funcGenerics[0]
                     .type->getStatic()
                     ->evaluate()
                     .getString();
   std::vector<std::pair<std::string, TypePtr>> args{{"", typ}};
-  if (expr->expr->isId("hasattr:0")) {
-    // Case: the first hasattr overload allows passing argument types via *args
-    auto tup = expr->args[1].value->getTuple();
-    seqassert(tup, "not a tuple");
-    for (auto &a : tup->items) {
-      transform(a);
-      if (!a->getType()->getClass())
+
+  // Case: passing argument types via *args
+  auto tup = expr->args[1].value->getTuple();
+  seqassert(tup, "not a tuple");
+  for (auto &a : tup->items) {
+    transform(a);
+    if (!a->getType()->getClass())
+      return nullptr;
+    args.emplace_back("", a->getType());
+  }
+  auto kwtup = expr->args[2].value->origExpr->getCall();
+  seqassert(expr->args[2].value->origExpr && expr->args[2].value->origExpr->getCall(),
+            "expected call: {}", expr->args[2].value->origExpr);
+  auto kw = expr->args[2].value->origExpr->getCall();
+  auto kwCls =
+      in(ctx->cache->classes, expr->args[2].value->getType()->getClass()->name);
+  seqassert(kwCls, "cannot find {}", expr->args[2].value->getType()->getClass()->name);
+  for (size_t i = 0; i < kw->args.size(); i++) {
+    auto &a = kw->args[i].value;
+    transform(a);
+    if (!a->getType()->getClass())
+      return nullptr;
+    args.emplace_back(kwCls->fields[i].name, a->getType());
+  }
+
+  if (typ->getUnion()) {
+    ExprPtr cond = nullptr;
+    auto unionTypes = typ->getUnion()->getRealizationTypes();
+    int tag = -1;
+    for (size_t ui = 0; ui < unionTypes.size(); ui++) {
+      auto tu = realize(unionTypes[ui]);
+      if (!tu)
         return nullptr;
-      args.push_back({"", a->getType()});
+      auto te = N<IdExpr>(tu->getClass()->realizedTypeName());
+      auto e = N<BinaryExpr>(
+          N<CallExpr>(N<IdExpr>("isinstance"), expr->args[0].value, te), "&&",
+          N<CallExpr>(N<IdExpr>("hasattr"), te, N<StringExpr>(member)));
+      cond = !cond ? e : N<BinaryExpr>(cond, "||", e);
     }
-    auto kwtup = expr->args[2].value->origExpr->getCall();
-    seqassert(expr->args[2].value->origExpr && expr->args[2].value->origExpr->getCall(),
-              "expected call: {}", expr->args[2].value->origExpr);
-    auto kw = expr->args[2].value->origExpr->getCall();
-    auto kwCls =
-        in(ctx->cache->classes, expr->args[2].value->getType()->getClass()->name);
-    seqassert(kwCls, "cannot find {}",
-              expr->args[2].value->getType()->getClass()->name);
-    for (size_t i = 0; i < kw->args.size(); i++) {
-      auto &a = kw->args[i].value;
-      transform(a);
-      if (!a->getType()->getClass())
-        return nullptr;
-      args.push_back({kwCls->fields[i].name, a->getType()});
-    }
+    if (!cond)
+      return transform(N<BoolExpr>(false));
+    return transform(cond);
   }
 
   bool exists = !ctx->findMethod(typ->getClass().get(), member).empty() ||
@@ -978,10 +1019,6 @@ std::pair<bool, ExprPtr> TypecheckVisitor::transformInternalStaticFn(CallExpr *e
     if (!typ)
       return {true, nullptr};
 
-    auto fn = expr->args[0].value->type->getFunc();
-    if (!fn)
-      error("expected a function, got '{}'", expr->args[0].value->type->prettyString());
-
     auto inargs = unpackTupleTypes(expr->args[1].value);
     auto kwargs = unpackTupleTypes(expr->args[2].value);
     seqassert(inargs && kwargs, "bad call to fn_can_call");
@@ -995,7 +1032,16 @@ std::pair<bool, ExprPtr> TypecheckVisitor::transformInternalStaticFn(CallExpr *e
       callArgs.push_back({a.first, std::make_shared<NoneExpr>()}); // dummy expression
       callArgs.back().value->setType(a.second);
     }
-    return {true, transform(N<BoolExpr>(canCall(fn, callArgs) >= 0))};
+
+    if (auto fn = expr->args[0].value->type->getFunc()) {
+      return {true, transform(N<BoolExpr>(canCall(fn, callArgs) >= 0))};
+    } else if (auto pt = expr->args[0].value->type->getPartial()) {
+      return {true, transform(N<BoolExpr>(canCall(pt->func, callArgs, pt) >= 0))};
+    } else {
+      compilationWarning("cannot use fn_can_call on non-functions", getSrcInfo().file,
+                         getSrcInfo().line, getSrcInfo().col);
+      return {true, transform(N<BoolExpr>(false))};
+    }
   } else if (expr->expr->isId("std.internal.static.fn_arg_has_type")) {
     expr->staticValue.type = StaticValue::INT;
     auto fn = ctx->extractFunction(expr->args[0].value->type);

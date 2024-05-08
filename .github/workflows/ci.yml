@@ -33,7 +33,7 @@ jobs:
 
       - name: Save Release URL File for Publish
         if: steps.check.outputs.MAKE_RELEASE
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: release_url
           path: release_url.txt
@@ -47,7 +47,7 @@ jobs:
 
       - name: Cache Dependencies
         id: cache-deps
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: llvm
           key: manylinux-llvm
@@ -57,7 +57,7 @@ jobs:
 
       - name: Load Release URL File
         if: contains(github.ref, 'tags/v')
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: release_url
 
@@ -84,7 +84,7 @@ jobs:
           asset_content_type: application/gzip
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: manylinux-x86_64
           path: codon-linux-x86_64.tar.gz
@@ -100,7 +100,7 @@ jobs:
     needs: [ release ]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.9'
 
@@ -127,7 +127,7 @@ jobs:
 
       - name: Cache Dependencies
         id: cache-deps
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: llvm
           key: ${{ runner.os }}-llvm
@@ -186,7 +186,7 @@ jobs:
 
       - name: Load Release URL File
         if: contains(github.ref, 'tags/v')
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: release_url
 
@@ -214,14 +214,14 @@ jobs:
 
       - name: Upload Artifacts
         if: startsWith(matrix.os, 'macos')
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}-x86_64
           path: codon-darwin-x86_64.tar.gz
 
       - name: Upload Artifacts
         if: startsWith(matrix.os, 'ubuntu')
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}-x86_64
           path: codon-linux-x86_64.tar.gz

@@ -1,4 +1,4 @@
-// Copyright (C) 2022-2023 Exaloop Inc. <https://exaloop.io>
+// Copyright (C) 2022-2024 Exaloop Inc. <https://exaloop.io>
 
 #pragma once
 
@@ -52,7 +52,7 @@ public:
   llvm::Error addModule(llvm::orc::ThreadSafeModule module,
                         llvm::orc::ResourceTrackerSP rt = nullptr);
 
-  llvm::Expected<llvm::JITEvaluatedSymbol> lookup(llvm::StringRef name);
+  llvm::Expected<llvm::orc::ExecutorSymbolDef> lookup(llvm::StringRef name);
 };
 
 } // namespace jit
